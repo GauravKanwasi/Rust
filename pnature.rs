@@ -17,11 +17,27 @@ fn main() {
         }
     };
 
+    // Sign check
     if number > 0.0 {
-        println!("The number is Positive.");
+        println!("Nature: Positive");
     } else if number < 0.0 {
-        println!("The number is Negative.");
+        println!("Nature: Negative");
     } else {
-        println!("The number is Zero.");
+        println!("Nature: Zero");
+    }
+
+    // Integer or decimal check
+    if number.fract() == 0.0 {
+        println!("Type: Integer");
+
+        let int_number = number as i64;
+
+        if int_number % 2 == 0 {
+            println!("Property: Even");
+        } else {
+            println!("Property: Odd");
+        }
+    } else {
+        println!("Type: Decimal (floating-point)");
     }
 }
