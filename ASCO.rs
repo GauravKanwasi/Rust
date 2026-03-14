@@ -9,19 +9,18 @@ fn main() {
         .expect("Failed to read input");
 
     let input = input.trim_end();
+    let separator = "-".repeat(45);
 
-    let max_len = input.chars().map(|ch| ch.len_utf8()).max().unwrap_or(1);
-    let separator = "-".repeat(30 + max_len);
-
-    println!("\n{:<15} {:<10} {}", "Character", "Decimal", "Hex");
+    println!("\n{:<16} {:<12} {}", "Character", "Decimal", "Hex");
     println!("{}", separator);
 
     for ch in input.chars() {
+        let display = format!("'{}'", ch);
         if ch.is_ascii() {
-            println!("'{:<14} {:<10} {:#04X}", format!("{}'", ch), ch as u8, ch as u8);
+            println!("{:<16} {:<12} {:#04X}", display, ch as u8, ch as u8);
         } else {
             let code_point = ch as u32;
-            println!("'{:<14} {:<10} U+{:04X}  (non-ASCII)", format!("{}'", ch), code_point, code_point);
+            println!("{:<16} {:<12} U+{:04X}  (non-ASCII)", display, code_point, code_point);
         }
     }
 
@@ -30,7 +29,7 @@ fn main() {
     let non_ascii_count = total - ascii_count;
 
     println!("{}", separator);
-    println!("Total characters : {}", total);
-    println!("ASCII            : {}", ascii_count);
-    println!("Non-ASCII        : {}", non_ascii_count);
+    println!("{:<16} {}", "Total:", total);
+    println!("{:<16} {}", "ASCII:", ascii_count);
+    println!("{:<16} {}", "Non-ASCII:", non_ascii_count);
 }
