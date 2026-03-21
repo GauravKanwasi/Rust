@@ -1,329 +1,277 @@
-use std::io::{self, Write};
 use std::collections::HashMap;
+use std::io::{self, Write};
+
 
 #[derive(Clone)]
 struct Member {
-    name: String,
-    age: u32,
-    plan: String,
+    name:  String,
+    age:   u32,
+    plan:  Plan,
     email: String,
     phone: String,
 }
 
-fn input(prompt: &str) -> String {
-    let mut s = String::new();
-    print!("{}", prompt);
+#[derive(Clone, PartialEq)]
+enum Plan { Basic, Standard, Premium }
+
+impl Plan {
+    fn from_choice(s: &str) -> Option<Self> {
+        match s { "1" => Some(Self::Basic), "2" => Some(Self::Standard), "3" => Some(Self::Premium), _ => None }
+    }
+    fn as_str(&self) -> &str {
+        match self { Self::Basic => "Basic", Self::Standard => "Standard", Self::Premium => "Premium" }
+    }
+}
+
+impl std::fmt::Display for Plan {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "{}", self.as_str()) }
+}
+
+
+fn prompt(msg: &str) -> String {
+    print!("{}", msg);
     io::stdout().flush().unwrap();
+    let mut s = String::new();
     io::stdin().read_line(&mut s).unwrap();
     s.trim().to_string()
 }
 
-fn print_separator() {
-    println!("{}", "-".repeat(60));
+fn divider() { println!("{}", "─".repeat(58)); }
+
+fn header(title: &str) {
+    println!();
+    divider();
+    println!("  {}", title);
+    divider();
 }
 
-fn print_member(id: u32, m: &Member) {
-    print_separator();
-    println!("  ID     : {}", id);
-    println!("  Name   : {}", m.name);
-    println!("  Age    : {}", m.age);
-    println!("  Plan   : {}", m.plan);
-    println!("  Email  : {}", m.email);
-    println!("  Phone  : {}", m.phone);
+fn ok(msg: &str)   { println!("  ✔  {}", msg); }
+fn err(msg: &str)  { println!("  ✖  {}", msg); }
+fn info(msg: &str) { println!("  ·  {}", msg); }
+
+
+fn valid_name(s: &str) -> bool {
+    !s.trim().is_empty() && s.chars().all(|c| c.is_alphabetic() || c == ' ')
 }
 
-fn validate_age(input: &str) -> Option<u32> {
-    match input.trim().parse::<u32>() {
-        Ok(age) if age > 0 && age <= 120 => Some(age),
-        _ => None,
+fn valid_age(s: &str) -> Option<u32> {
+    s.trim().parse::<u32>().ok().filter(|&a| a >= 1 && a <= 120)
+}
+
+fn valid_email(s: &str) -> bool {
+    s.contains('@') && s.contains('.') && s.len() >= 5
+}
+
+fn valid_phone(s: &str) -> bool {
+    let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    d.len() >= 7 && d.len() <= 15
+}
+
+
+fn ask_name(label: &str) -> String {
+    loop {
+        let v = prompt(&format!("  {} Name : ", label));
+        if valid_name(&v) { return v.trim().to_string(); }
+        err("Only letters and spaces allowed.");
     }
 }
 
-fn validate_email(email: &str) -> bool {
-    email.contains('@') && email.contains('.') && email.len() >= 5
+fn ask_age(label: &str) -> u32 {
+    loop {
+        let v = prompt(&format!("  {} Age  : ", label));
+        if let Some(a) = valid_age(&v) { return a; }
+        err("Enter a number between 1 and 120.");
+    }
 }
 
-fn validate_phone(phone: &str) -> bool {
-    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
-    digits.len() >= 7 && digits.len() <= 15
+fn ask_email(label: &str) -> String {
+    loop {
+        let v = prompt(&format!("  {} Email: ", label));
+        if valid_email(&v) { return v; }
+        err("Invalid email format.");
+    }
 }
 
-fn validate_name(name: &str) -> bool {
-    !name.trim().is_empty() && name.chars().all(|c| c.is_alphabetic() || c == ' ')
+fn ask_phone(label: &str) -> String {
+    loop {
+        let v = prompt(&format!("  {} Phone: ", label));
+        if valid_phone(&v) { return v; }
+        err("Phone must have 7–15 digits.");
+    }
 }
+
+fn ask_plan(label: &str) -> Plan {
+    loop {
+        println!("  {} Plan  : [1] Basic  [2] Standard  [3] Premium", label);
+        let v = prompt("  Choose (1/2/3): ");
+        if let Some(p) = Plan::from_choice(&v) { return p; }
+        err("Enter 1, 2 or 3.");
+    }
+}
+
+fn print_member(id: u32, m: &Member) {
+    println!(
+        "  #{:<4}  {:<20}  Age: {:<4}  Plan: {:<9}  {}  {}",
+        id, m.name, m.age, m.plan, m.email, m.phone
+    );
+}
+
 
 fn add_member(members: &mut HashMap<u32, Member>, next_id: &mut u32) {
-    println!("\n--- Add New Member ---");
-
-    let name = loop {
-        let n = input("Name: ");
-        if validate_name(&n) {
-            break n;
-        }
-        println!("  Invalid name. Only letters and spaces allowed.");
+    header("ADD MEMBER");
+    let member = Member {
+        name:  ask_name(""),
+        age:   ask_age(""),
+        email: ask_email(""),
+        phone: ask_phone(""),
+        plan:  ask_plan(""),
     };
-
-    let age = loop {
-        let raw = input("Age: ");
-        if let Some(a) = validate_age(&raw) {
-            break a;
-        }
-        println!("  Invalid age. Enter a number between 1 and 120.");
-    };
-
-    let plan = loop {
-        println!("  Plans: [1] Basic  [2] Standard  [3] Premium");
-        let p = input("Select plan (1/2/3): ");
-        match p.as_str() {
-            "1" => break "Basic".to_string(),
-            "2" => break "Standard".to_string(),
-            "3" => break "Premium".to_string(),
-            _ => println!("  Invalid plan selection."),
-        }
-    };
-
-    let email = loop {
-        let e = input("Email: ");
-        if validate_email(&e) {
-            break e;
-        }
-        println!("  Invalid email format.");
-    };
-
-    let phone = loop {
-        let p = input("Phone: ");
-        if validate_phone(&p) {
-            break p;
-        }
-        println!("  Invalid phone number.");
-    };
-
-    let member = Member { name, age, plan, email, phone };
     members.insert(*next_id, member);
-    println!("\n  Member successfully added with ID {}.", *next_id);
+    ok(&format!("Member added — ID #{}", *next_id));
     *next_id += 1;
 }
 
 fn view_members(members: &HashMap<u32, Member>) {
-    if members.is_empty() {
-        println!("\n  No members found.");
-        return;
-    }
+    header(&format!("ALL MEMBERS  ({})", members.len()));
+    if members.is_empty() { info("No members yet."); return; }
 
-    println!("\n--- All Members ({} total) ---", members.len());
-    let mut sorted: Vec<(&u32, &Member)> = members.iter().collect();
-    sorted.sort_by_key(|(id, _)| *id);
-    for (id, m) in sorted {
-        print_member(*id, m);
-    }
-    print_separator();
+    let mut list: Vec<(&u32, &Member)> = members.iter().collect();
+    list.sort_by_key(|(id, _)| *id);
+    for (id, m) in list { print_member(**id, m); }
 }
 
 fn search_members(members: &HashMap<u32, Member>) {
-    if members.is_empty() {
-        println!("\n  No members to search.");
-        return;
-    }
-
-    println!("\n--- Search Members ---");
-    println!("  [1] Search by ID");
-    println!("  [2] Search by Name");
-    println!("  [3] Search by Plan");
-
-    let choice = input("Choose search type: ");
+    if members.is_empty() { err("No members to search."); return; }
+    header("SEARCH");
+    println!("  [1] By ID   [2] By Name   [3] By Plan");
+    let choice = prompt("  Choose: ");
 
     match choice.as_str() {
         "1" => {
-            let id: u32 = input("Enter ID: ").parse().unwrap_or(0);
+            let raw = prompt("  Member ID: ");
+            let id: u32 = raw.trim().parse().unwrap_or(0);
             match members.get(&id) {
-                Some(m) => { print_member(id, m); print_separator(); }
-                None => println!("  No member found with ID {}.", id),
+                Some(m) => { divider(); print_member(id, m); divider(); }
+                None    => err(&format!("No member with ID #{}.", id)),
             }
         }
         "2" => {
-            let query = input("Enter name (partial match): ").to_lowercase();
-            let results: Vec<_> = members.iter()
-                .filter(|(_, m)| m.name.to_lowercase().contains(&query))
+            let q = prompt("  Name (partial): ").to_lowercase();
+            let hits: Vec<_> = members.iter()
+                .filter(|(_, m)| m.name.to_lowercase().contains(&q))
                 .collect();
-            if results.is_empty() {
-                println!("  No members found matching '{}'.", query);
-            } else {
-                for (id, m) in results {
-                    print_member(*id, m);
-                }
-                print_separator();
+            if hits.is_empty() { err(&format!("No match for '{}'.", q)); }
+            else {
+                divider();
+                let mut sorted = hits; sorted.sort_by_key(|(id, _)| *id);
+                for (id, m) in sorted { print_member(**id, m); }
+                divider();
             }
         }
         "3" => {
-            println!("  Plans: [1] Basic  [2] Standard  [3] Premium");
-            let p = input("Select plan (1/2/3): ");
-            let plan = match p.as_str() {
-                "1" => "Basic",
-                "2" => "Standard",
-                "3" => "Premium",
-                _ => { println!("  Invalid selection."); return; }
-            };
-            let results: Vec<_> = members.iter()
+            let plan = ask_plan("Filter by");
+            let hits: Vec<_> = members.iter()
                 .filter(|(_, m)| m.plan == plan)
                 .collect();
-            if results.is_empty() {
-                println!("  No members on the {} plan.", plan);
-            } else {
-                println!("\n  Members on {} plan:", plan);
-                for (id, m) in results {
-                    print_member(*id, m);
-                }
-                print_separator();
+            if hits.is_empty() { info(&format!("No members on {} plan.", plan)); }
+            else {
+                divider();
+                let mut sorted = hits; sorted.sort_by_key(|(id, _)| *id);
+                for (id, m) in sorted { print_member(**id, m); }
+                divider();
             }
         }
-        _ => println!("  Invalid search option."),
+        _ => err("Invalid option."),
     }
 }
 
 fn update_member(members: &mut HashMap<u32, Member>) {
-    if members.is_empty() {
-        println!("\n  No members to update.");
-        return;
-    }
+    if members.is_empty() { err("No members to update."); return; }
+    header("UPDATE MEMBER");
 
-    println!("\n--- Update Member ---");
-    let id: u32 = input("Enter member ID to update: ").parse().unwrap_or(0);
+    let raw = prompt("  Member ID: ");
+    let id: u32 = raw.trim().parse().unwrap_or(0);
+    if !members.contains_key(&id) { err(&format!("No member with ID #{}.", id)); return; }
 
-    if !members.contains_key(&id) {
-        println!("  Member with ID {} not found.", id);
-        return;
-    }
-
-    println!("  What would you like to update?");
     println!("  [1] Name  [2] Age  [3] Plan  [4] Email  [5] Phone");
-    let field = input("Choose field: ");
-
-    let member = members.get_mut(&id).unwrap();
+    let field = prompt("  Field to update: ");
+    let m = members.get_mut(&id).unwrap();
 
     match field.as_str() {
-        "1" => {
-            let name = loop {
-                let n = input("New name: ");
-                if validate_name(&n) { break n; }
-                println!("  Invalid name.");
-            };
-            member.name = name;
-            println!("  Name updated.");
-        }
-        "2" => {
-            let age = loop {
-                let raw = input("New age: ");
-                if let Some(a) = validate_age(&raw) { break a; }
-                println!("  Invalid age.");
-            };
-            member.age = age;
-            println!("  Age updated.");
-        }
-        "3" => {
-            let plan = loop {
-                println!("  Plans: [1] Basic  [2] Standard  [3] Premium");
-                let p = input("Select plan: ");
-                match p.as_str() {
-                    "1" => break "Basic".to_string(),
-                    "2" => break "Standard".to_string(),
-                    "3" => break "Premium".to_string(),
-                    _ => println!("  Invalid selection."),
-                }
-            };
-            member.plan = plan;
-            println!("  Plan updated.");
-        }
-        "4" => {
-            let email = loop {
-                let e = input("New email: ");
-                if validate_email(&e) { break e; }
-                println!("  Invalid email.");
-            };
-            member.email = email;
-            println!("  Email updated.");
-        }
-        "5" => {
-            let phone = loop {
-                let p = input("New phone: ");
-                if validate_phone(&p) { break p; }
-                println!("  Invalid phone.");
-            };
-            member.phone = phone;
-            println!("  Phone updated.");
-        }
-        _ => println!("  Invalid field selection."),
+        "1" => { m.name  = ask_name("New");  ok("Name updated."); }
+        "2" => { m.age   = ask_age("New");   ok("Age updated."); }
+        "3" => { m.plan  = ask_plan("New");  ok("Plan updated."); }
+        "4" => { m.email = ask_email("New"); ok("Email updated."); }
+        "5" => { m.phone = ask_phone("New"); ok("Phone updated."); }
+        _   => err("Invalid field."),
     }
 }
 
 fn remove_member(members: &mut HashMap<u32, Member>) {
-    if members.is_empty() {
-        println!("\n  No members to remove.");
-        return;
-    }
+    if members.is_empty() { err("No members to remove."); return; }
+    header("REMOVE MEMBER");
 
-    println!("\n--- Remove Member ---");
-    let id: u32 = input("Enter ID to remove: ").parse().unwrap_or(0);
+    let raw = prompt("  Member ID: ");
+    let id: u32 = raw.trim().parse().unwrap_or(0);
 
-    if let Some(m) = members.get(&id) {
-        println!("  Removing: {} (Plan: {})", m.name, m.plan);
-        let confirm = input("  Confirm removal? (yes/no): ");
-        if confirm.eq_ignore_ascii_case("yes") {
-            members.remove(&id);
-            println!("  Member removed successfully.");
-        } else {
-            println!("  Removal cancelled.");
+    match members.get(&id) {
+        None    => err(&format!("No member with ID #{}.", id)),
+        Some(m) => {
+            info(&format!("About to remove: {} ({})", m.name, m.plan));
+            let confirm = prompt("  Confirm? (yes/no): ");
+            if confirm.eq_ignore_ascii_case("yes") {
+                members.remove(&id);
+                ok("Member removed.");
+            } else {
+                info("Cancelled.");
+            }
         }
-    } else {
-        println!("  Member with ID {} not found.", id);
     }
 }
 
 fn show_stats(members: &HashMap<u32, Member>) {
-    if members.is_empty() {
-        println!("\n  No members to show stats for.");
-        return;
-    }
+    header("STATISTICS");
+    if members.is_empty() { info("No data yet."); return; }
 
-    let total = members.len();
-    let avg_age: f64 = members.values().map(|m| m.age as f64).sum::<f64>() / total as f64;
-    let basic = members.values().filter(|m| m.plan == "Basic").count();
-    let standard = members.values().filter(|m| m.plan == "Standard").count();
-    let premium = members.values().filter(|m| m.plan == "Premium").count();
-    let youngest = members.values().min_by_key(|m| m.age).unwrap();
-    let oldest = members.values().max_by_key(|m| m.age).unwrap();
+    let vals: Vec<&Member> = members.values().collect();
+    let total = vals.len();
+    let avg   = vals.iter().map(|m| m.age as f64).sum::<f64>() / total as f64;
 
-    println!("\n--- Member Statistics ---");
-    print_separator();
-    println!("  Total Members  : {}", total);
-    println!("  Average Age    : {:.1}", avg_age);
-    println!("  Youngest       : {} ({})", youngest.name, youngest.age);
-    println!("  Oldest         : {} ({})", oldest.name, oldest.age);
-    print_separator();
-    println!("  Basic          : {} member(s)", basic);
-    println!("  Standard       : {} member(s)", standard);
-    println!("  Premium        : {} member(s)", premium);
-    print_separator();
+    let basic    = vals.iter().filter(|m| m.plan == Plan::Basic).count();
+    let standard = vals.iter().filter(|m| m.plan == Plan::Standard).count();
+    let premium  = vals.iter().filter(|m| m.plan == Plan::Premium).count();
+
+    let youngest = vals.iter().min_by_key(|m| m.age).unwrap();
+    let oldest   = vals.iter().max_by_key(|m| m.age).unwrap();
+
+    println!("  Total Members : {}", total);
+    println!("  Average Age   : {:.1}", avg);
+    println!("  Youngest      : {} ({})", youngest.name, youngest.age);
+    println!("  Oldest        : {} ({})", oldest.name, oldest.age);
+    divider();
+
+    // simple bar chart
+    let bar = |count: usize| "█".repeat(count * 20 / total.max(1));
+    println!("  Basic    {:>3}  {}", basic,    bar(basic));
+    println!("  Standard {:>3}  {}", standard, bar(standard));
+    println!("  Premium  {:>3}  {}", premium,  bar(premium));
+    divider();
 }
+
 
 fn main() {
     let mut members: HashMap<u32, Member> = HashMap::new();
     let mut next_id: u32 = 1;
 
-    println!("========================================");
-    println!("     Gym Membership Management System   ");
-    println!("========================================");
+    println!("╔══════════════════════════════════════════════════════╗");
+    println!("║          GYM MEMBERSHIP MANAGEMENT SYSTEM           ║");
+    println!("╚══════════════════════════════════════════════════════╝");
 
     loop {
-        println!("\n--- Main Menu ---");
-        println!("  [1] Add Member");
-        println!("  [2] View All Members");
-        println!("  [3] Search Members");
-        println!("  [4] Update Member");
-        println!("  [5] Remove Member");
-        println!("  [6] Statistics");
-        println!("  [7] Exit");
-
-        let choice = input("\nChoose: ");
+        println!();
+        println!("  [1] Add     [2] View    [3] Search");
+        println!("  [4] Update  [5] Remove  [6] Stats   [7] Exit");
+        let choice = prompt("\n  > ");
 
         match choice.as_str() {
             "1" => add_member(&mut members, &mut next_id),
@@ -332,11 +280,8 @@ fn main() {
             "4" => update_member(&mut members),
             "5" => remove_member(&mut members),
             "6" => show_stats(&members),
-            "7" => {
-                println!("\n  Goodbye!");
-                break;
-            }
-            _ => println!("\n  Invalid choice. Please select 1-7."),
+            "7" => { println!("\n  Goodbye!\n"); break; }
+            _   => err("Enter 1–7."),
         }
     }
 }
