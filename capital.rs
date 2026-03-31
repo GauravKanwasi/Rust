@@ -1,15 +1,9 @@
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 fn main() {
-    // Read all input from stdin
     let mut input = String::new();
-    io::stdin()
-        .read_to_string(&mut input)
-        .expect("Failed to read input");
+    io::stdin().read_to_string(&mut input).unwrap();
 
-    // Convert entire input to uppercase
-    let output = input.to_uppercase();
-
-    // Print the result
-    print!("{}", output);
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(input.to_uppercase().as_bytes()).unwrap();
 }
