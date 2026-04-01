@@ -1,21 +1,21 @@
 use std::io::{self, Read};
 
 fn main() {
-    // Read all input from stdin
     let mut input = String::new();
     io::stdin().read_to_string(&mut input).unwrap();
 
-    let mut result = String::new();
+    let result: Result<String, _> = input
+        .split_whitespace()
+        .map(|token| {
+            token
+                .parse::<u8>()
+                .map(|code| code as char)
+                .map_err(|_| token)
+        })
+        .collect();
 
-    for token in input.split_whitespace() {
-        match token.parse::<u8>() {
-            Ok(code) => result.push(code as char),
-            Err(_) => {
-                eprintln!("Invalid ASCII code: {}", token);
-                return;
-            }
-        }
+    match result {
+        Ok(text) => println!("{}", text),
+        Err(bad_token) => eprintln!("Invalid ASCII code: {}", bad_token),
     }
-
-    println!("{}", result);
 }
