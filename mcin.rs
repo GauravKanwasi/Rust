@@ -1,27 +1,62 @@
+use std::io::{self, Write};
+
+fn read_number<T: std::str::FromStr>() -> T {
+    let mut input = String::new();
+    loop {
+        input.clear();
+        io::stdin().read_line(&mut input).unwrap();
+        if let Ok(value) = input.trim().parse::<T>() {
+            return value;
+        }
+        print!("Invalid input, try again: ");
+        io::stdout().flush().unwrap();
+    }
+}
+
 fn mcin() {
-    // --- Addition Example (using i32 integers) ---
-    let num1: i32 = 15;
-    let num2: i32 = 7;
-
-    // Perform the addition
-    let sum = num1 + num2;
-
-    // Print the result of the addition
     println!("--- Addition ---");
-    println!("The sum of {} and {} is: {}", num1, num2, sum); // Output: 22
+    print!("Enter first integer: ");
+    io::stdout().flush().unwrap();
+    let num1: i32 = read_number();
 
-    // Add a separator for clarity
+    print!("Enter second integer: ");
+    io::stdout().flush().unwrap();
+    let num2: i32 = read_number();
+
+    let sum = num1 + num2;
+    println!("Result: {}", sum);
+
     println!("\n---------------------\n");
 
-    // --- Subtraction Example (using f64 floating-point numbers) ---
-    let num3: f64 = 45.5; 
-    let num4: f64 = 10.2;
-
-    // Perform the subtraction
-    let difference = num3 - num4;
-
-    // Print the result of the subtraction
     println!("--- Subtraction ---");
-    // :.2 formats the floating-point number to two decimal places
-    println!("The difference between {} and {} is: {:.2}", num3, num4, difference); // Output: 35.30
+    print!("Enter first number: ");
+    io::stdout().flush().unwrap();
+    let num3: f64 = read_number();
+
+    print!("Enter second number: ");
+    io::stdout().flush().unwrap();
+    let num4: f64 = read_number();
+
+    let difference = num3 - num4;
+    println!("Result: {:.2}", difference);
+
+    println!("\n---------------------\n");
+
+    println!("--- Multiplication ---");
+    let product = num3 * num4;
+    println!("Result: {:.2}", product);
+
+    println!("\n---------------------\n");
+
+    println!("--- Division ---");
+    if num4 != 0.0 {
+        let quotient = num3 / num4;
+        println!("Result: {:.2}", quotient);
+    } else {
+        println!("Division by zero is not allowed");
+    }
+}
+
+fn main() {
+    mcin();
 }
