@@ -1,15 +1,12 @@
-// 1. Define a Trait (similar to an Interface or Abstract Class)
-trait Animal {
-    // A method with a default implementation
+use std::fmt::Display;
+
+trait Animal: Display {
     fn breathe(&self) {
         println!("Taking a breath...");
     }
-
-    // A method that must be implemented by the struct
     fn make_sound(&self) -> String;
 }
 
-// 2. Define your specific types (Structs)
 struct Dog {
     name: String,
 }
@@ -18,7 +15,18 @@ struct Cat {
     name: String,
 }
 
-// 3. Implement the Trait for each Struct
+impl Display for Dog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Dog({})", self.name)
+    }
+}
+
+impl Display for Cat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cat({})", self.name)
+    }
+}
+
 impl Animal for Dog {
     fn make_sound(&self) -> String {
         format!("{} says: Woof!", self.name)
@@ -31,19 +39,31 @@ impl Animal for Cat {
     }
 }
 
-// 4. Using Polymorphism via Generics or Dynamic Dispatch
-fn announce_animal(animal: &dyn Animal) {
+fn announce<T: Animal>(animal: &T) {
+    println!("{}", animal);
+    animal.breathe();
+    println!("{}", animal.make_sound());
+}
+
+fn announce_dyn(animal: &dyn Animal) {
+    println!("{}", animal);
     animal.breathe();
     println!("{}", animal.make_sound());
 }
 
 fn main() {
-    let my_dog = Dog { name: String::from("Buddy") };
-    let my_cat = Cat { name: String::from("Whiskers") };
+    let animals: Vec<Box<dyn Animal>> = vec![
+        Box::new(Dog { name: "Buddy".into() }),
+        Box::new(Cat { name: "Whiskers".into() }),
+    ];
 
-    println!("--- Testing Dog ---");
-    announce_animal(&my_dog);
+    for a in &animals {
+        announce_dyn(a.as_ref());
+    }
 
-    println!("\n--- Testing Cat ---");
-    announce_animal(&my_cat);
+    let dog = Dog { name: "Max".into() };
+    let cat = Cat { name: "Luna".into() };
+
+    announce(&dog);
+    announce(&cat);
 }
