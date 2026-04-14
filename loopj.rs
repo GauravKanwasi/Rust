@@ -3,14 +3,15 @@ fn loopj() {
 
     println!("Starting the loop!");
 
-    // This is the simplest loop in Rust
-    loop {
+    let result = loop {
         count += 1;
         println!("Count is: {}", count);
 
         if count == 5 {
-            println!("Reached 5, breaking out of the loop.");
-            break; // This exits the loop
+            println!("Reached 5, exiting loop.");
+            break count;
         }
-    }
+    };
+
+    println!("Final count: {}", result);
 }
