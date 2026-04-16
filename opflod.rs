@@ -1,44 +1,86 @@
 use std::env;
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 fn main() -> io::Result<()> {
-    // Read command-line arguments
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: opflod <folder_path>");
+
+    if args.len() < 2 || args.len() > 3 {
+        eprintln!("Usage: opflod <folder_path> [--recursive]");
         std::process::exit(1);
     }
 
-    let folder_path = PathBuf::from(&args[1]);
+    let recursive = args.get(2).map(|s| s == "--recursive").unwrap_or(false);
 
-    // Ensure the path exists and is a directory
-    if !folder_path.exists() || !folder_path.is_dir() {
-        eprintln!("Error: Provided path is not a valid folder.");
+    let input_path = PathBuf::from(&args[1]);
+
+    if !input_path.exists() || !input_path.is_dir() {
+        eprintln!("Error: invalid directory");
         std::process::exit(1);
     }
 
-    // Canonicalize to prevent path traversal
-    let base_dir = fs::canonicalize(&folder_path)?;
+    let base = fs::canonicalize(&input_path)?;
 
-    // Read directory entries
-    for entry in fs::read_dir(&base_dir)? {
+    if recursive {
+        walk_dir(&base, &base)?;
+    } else {
+        for entry in fs::read_dir(&base)? {
+            let entry = entry?;
+            let path = entry.path();
+            process_file(&base, &path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn walk_dir(base: &Path, dir: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
 
-        // Only process regular files directly inside the folder
-        if path.is_file() && is_within_base(&base_dir, &path)? {
-            let filename = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("<unknown>");
+        if path.is_dir() {
+            walk_dir(base, &path)?;
+        } else {
+            process_file(base, &path)?;
+        }
+    }
+    Ok(())
+}
 
-            println!("--- File: {} ---", filename);
+fn process_file(base: &Path, path: &Path) -> io::Result<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
 
-            match fs::read_to_string(&path) {
-                Ok(contents) => println!("{}", contents),
-                Err(err) => eprintln!("Could not read {}: {}", filename, err),
+    if !is_within_base(base, path)? {
+        return Ok(());
+    }
+
+    if is_binary(path)? {
+        return Ok(());
+    }
+
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("<unknown>");
+    println!("--- File: {} ---", name);
+
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("open error {}: {}", name, e);
+            return Ok(());
+        }
+    };
+
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        match line {
+            Ok(l) => println!("{}", l),
+            Err(e) => {
+                eprintln!("read error {}: {}", name, e);
+                break;
             }
         }
     }
@@ -46,4 +88,16 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-// Ensures the file
+fn is_within_base(base: &Path, path: &Path) -> io::Result<bool> {
+    let canonical = fs::canonicalize(path)?;
+    Ok(canonical.starts_with(base))
+}
+
+fn is_binary(path: &Path) -> io::Result<bool> {
+    let data = match fs::read(path) {
+        Ok(d) => d,
+        Err(_) => return Ok(true),
+    };
+
+    Ok(data.iter().take(1024).any(|&b| b == 0))
+}
