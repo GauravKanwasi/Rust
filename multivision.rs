@@ -1,63 +1,33 @@
-use std::io;
+use std::io::{self, Write};
 
-/// The main function for the multivision program.
 fn main() {
-    println!("--- Multivision: Multiplication and Division Program ---");
-    println!("This program will multiply and divide two numbers you provide.");
+    println!("Multivision — Multiply & Divide");
 
-    // --- First Number Input ---
-    let num1 = loop {
-        match get_number("Please enter the **first** number (a float):") {
-            Ok(n) => break n,
-            Err(e) => {
-                println!("Error: {}", e);
-                // Continue the loop to ask again
-            }
-        }
-    };
+    let num1 = read_number("Enter first number:");
+    let num2 = read_number("Enter second number:");
 
-    // --- Second Number Input ---
-    let num2 = loop {
-        match get_number("Please enter the **second** number (a float):") {
-            Ok(n) => break n,
-            Err(e) => {
-                println!("Error: {}", e);
-                // Continue the loop to ask again
-            }
-        }
-    };
-
-    println!("\n--- Results ---");
-    
-    // Perform Multiplication
     let product = num1 * num2;
-    println!("Multiplication ({} * {}): {}", num1, num2, product);
+    println!("{} * {} = {}", num1, num2, product);
 
-    // Perform Division
-    if num2 == 0.0 {
-        println!("Division ({} / {}): Cannot divide by zero.", num1, num2);
-    } else {
-        let quotient = num1 / num2;
-        println!("Division ({} / {}): {}", num1, num2, quotient);
+    match num2 {
+        0.0 => println!("{} / {} = undefined", num1, num2),
+        _ => println!("{} / {} = {}", num1, num2, num1 / num2),
     }
-    
-    println!("-------------------");
 }
 
-/// Helper function to prompt the user for input and parse it as a float (f64).
-fn get_number(prompt: &str) -> Result<f64, String> {
-    println!("{}", prompt);
-    let mut input = String::new();
+fn read_number(prompt: &str) -> f64 {
+    loop {
+        print!("{} ", prompt);
+        io::stdout().flush().ok();
 
-    // Read a line from standard input
-    match io::stdin().read_line(&mut input) {
-        Ok(_) => {
-            // Trim whitespace and attempt to parse the string as an f64
-            match input.trim().parse::<f64>() {
-                Ok(number) => Ok(number),
-                Err(_) => Err(String::from("Invalid input. Please enter a valid number (e.g., 5, 3.14).")),
+        let mut input = String::new();
+
+        if io::stdin().read_line(&mut input).is_ok() {
+            if let Ok(value) = input.trim().parse::<f64>() {
+                return value;
             }
         }
-        Err(error) => Err(format!("Failed to read line: {}", error)),
+
+        println!("Invalid number, try again.");
     }
 }
