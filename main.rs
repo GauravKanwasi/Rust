@@ -1,22 +1,19 @@
-use std::io;
+use std::io::{self, Write};
 
-fn main() {
-    // 1. Prompt the user for input
-    println!("Hello! Please tell me your name:");
+fn main() -> io::Result<()> {
+    print!("Hello! Please tell me your name: ");
+    io::stdout().flush()?;
 
-    // 2. Create a mutable string to store the input
-    let mut user_name = String::new();
+    let mut user_name = String::with_capacity(32);
+    io::stdin().read_line(&mut user_name)?;
 
-    // 3. Read the line from standard input (stdin)
-    // The &mut user_name passes a mutable reference to the string.
-    // .expect() is used for basic error handling.
-    io::stdin()
-        .read_line(&mut user_name)
-        .expect("Failed to read line");
+    let user_name = user_name.trim();
 
-    // 4. Trim whitespace (including the newline character '\n' at the end)
-    let trimmed_name = user_name.trim();
+    if user_name.is_empty() {
+        println!("It's great to meet you, stranger!");
+    } else {
+        println!("It's great to meet you, {}!", user_name);
+    }
 
-    // 5. Print the personalized greeting
-    println!("It's great to meet you, {}!", trimmed_name);
+    Ok(())
 }
