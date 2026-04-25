@@ -1,43 +1,39 @@
-// sorting.rs
-// A simple Rust program demonstrating sorting
-
 use std::io;
 
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct User {
+    name: String,
+    age: u32,
+}
+
 fn main() {
-    // Example 1: Sorting integers
     let mut numbers = vec![42, 7, 19, 73, 3, 25];
-    println!("Original numbers: {:?}", numbers);
+    println!("Original: {:?}", numbers);
 
     numbers.sort();
-    println!("Sorted numbers (ascending): {:?}", numbers);
+    println!("Ascending: {:?}", numbers);
 
-    numbers.sort_by(|a, b| b.cmp(a));
-    println!("Sorted numbers (descending): {:?}", numbers);
+    numbers.reverse();
+    println!("Descending: {:?}", numbers);
 
-    // Example 2: Sorting strings
-    let mut names = vec![
-        String::from("Gaurav"),
-        String::from("Amit"),
-        String::from("Neha"),
-        String::from("Ravi"),
-        String::from("Sonia"),
+    let mut users = vec![
+        User { name: "Gaurav".to_string(), age: 30 },
+        User { name: "Amit".to_string(), age: 25 },
+        User { name: "Neha".to_string(), age: 28 },
     ];
 
-    println!("\nOriginal names: {:?}", names);
+    users.sort_by_key(|u| u.age);
+    println!("\nUsers sorted by age: {:?}", users);
 
-    names.sort();
-    println!("Sorted names (alphabetical): {:?}", names);
-
-    // Example 3: Sorting user input
-    println!("\nEnter words separated by spaces to sort:");
+    println!("\nEnter words separated by spaces:");
 
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
-        .expect("Failed to read input");
+        .expect("Failed to read line");
 
     let mut words: Vec<&str> = input.split_whitespace().collect();
-    words.sort();
+    words.sort_unstable();
 
-    println!("Sorted input words: {:?}", words);
+    println!("Sorted input: {:?}", words);
 }
