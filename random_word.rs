@@ -13,37 +13,110 @@ impl SimpleRng {
         Self { state: seed }
     }
 
+    fn new_with_seed(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
     fn next_u32(&mut self) -> u32 {
         self.state = self
             .state
             .wrapping_mul(6364136223846793005)
-            .wrapping_add(1);
-        (self.state >> 32) as u32
+            .wrapping_add(1442695040888963407);
+        ((self.state >> 33) ^ self.state) as u32
     }
 
     fn gen_range(&mut self, max: usize) -> usize {
         (self.next_u32() as usize) % max
     }
+
+    fn gen_range_between(&mut self, min: usize, max: usize) -> usize {
+        assert!(min < max, "min must be less than max");
+        min + self.gen_range(max - min)
+    }
 }
 
-fn generate_random_word(rng: &mut SimpleRng, length: usize) -> String {
-    let charset = b"abcdefghijklmnopqrstuvwxyz";
-    let mut word = String::with_capacity(length);
+#[derive(Debug, Clone, Copy)]
+enum CharSet {
+    Lowercase,
+    Uppercase,
+    Digits,
+    Alphanumeric,
+    Symbols,
+    All,
+    Custom(&'static [u8]),
+}
 
-    for _ in 0..length {
-        let idx = rng.gen_range(charset.len());
-        word.push(charset[idx] as char);
+impl CharSet {
+    fn bytes(self) -> &'static [u8] {
+        match self {
+            CharSet::Lowercase    => b"abcdefghijklmnopqrstuvwxyz",
+            CharSet::Uppercase    => b"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            CharSet::Digits       => b"0123456789",
+            CharSet::Alphanumeric => b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+            CharSet::Symbols      => b"!@#$%^&*()-_=+[]{}|;:,.<>?",
+            CharSet::All          => b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:,.<>?",
+            CharSet::Custom(b)    => b,
+        }
+    }
+}
+
+struct WordGenerator {
+    rng: SimpleRng,
+    charset: CharSet,
+}
+
+impl WordGenerator {
+    fn new(charset: CharSet) -> Self {
+        Self { rng: SimpleRng::new(), charset }
     }
 
-    word
+    fn with_seed(seed: u64, charset: CharSet) -> Self {
+        Self { rng: SimpleRng::new_with_seed(seed), charset }
+    }
+
+    fn generate(&mut self, length: usize) -> String {
+        let bytes = self.charset.bytes();
+        (0..length)
+            .map(|_| bytes[self.rng.gen_range(bytes.len())] as char)
+            .collect()
+    }
+
+    fn generate_variable(&mut self, min_len: usize, max_len: usize) -> String {
+        let length = self.rng.gen_range_between(min_len, max_len + 1);
+        self.generate(length)
+    }
+
+    fn generate_batch(&mut self, count: usize, length: usize) -> Vec<String> {
+        (0..count).map(|_| self.generate(length)).collect()
+    }
+
+    fn generate_batch_variable(&mut self, count: usize, min_len: usize, max_len: usize) -> Vec<String> {
+        (0..count).map(|_| self.generate_variable(min_len, max_len)).collect()
+    }
 }
 
 fn main() {
-    let mut rng = SimpleRng::new();
-    let word_count = 10;
-    let word_length = 6;
+    println!("=== Fixed Length (Lowercase) ===");
+    let mut gen = WordGenerator::new(CharSet::Lowercase);
+    for word in gen.generate_batch(6, 6) {
+        println!("{}", word);
+    }
 
-    for _ in 0..word_count {
-        println!("{}", generate_random_word(&mut rng, word_length));
+    println!("\n=== Variable Length (Alphanumeric) ===");
+    let mut gen = WordGenerator::new(CharSet::Alphanumeric);
+    for word in gen.generate_batch_variable(6, 4, 10) {
+        println!("{}", word);
+    }
+
+    println!("\n=== Fixed Seed / Reproducible (All chars) ===");
+    let mut gen = WordGenerator::with_seed(42, CharSet::All);
+    for word in gen.generate_batch(6, 8) {
+        println!("{}", word);
+    }
+
+    println!("\n=== Custom Charset ===");
+    let mut gen = WordGenerator::new(CharSet::Custom(b"AEIOU01"));
+    for word in gen.generate_batch(6, 6) {
+        println!("{}", word);
     }
 }
