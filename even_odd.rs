@@ -1,32 +1,45 @@
 use std::io;
 
+fn is_prime(n: i64) -> bool {
+    let n = n.unsigned_abs();
+    if n < 2 { return false; }
+    (2..=((n as f64).sqrt() as u64)).all(|i| n % i != 0)
+}
+
+fn factors_of(n: i64) -> Vec<i64> {
+    let n = n.unsigned_abs() as i64;
+    if n <= 1 { return vec![]; }
+    (1..=n).filter(|i| n % i == 0).collect()
+}
+
 fn main() {
     loop {
-        println!("Enter a number (or type 'exit' to quit):");
-
         let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
+        println!("Enter a number (or 'q' to quit):");
 
+        io::stdin().read_line(&mut input).unwrap();
         let trimmed = input.trim();
 
-        if trimmed.eq_ignore_ascii_case("exit") {
-            println!("Goodbye!");
-            break;
-        }
+        if trimmed == "q" { break; }
 
-        match trimmed.parse::<i32>() {
-            Ok(num) => {
-                if num % 2 == 0 {
-                    println!("{} is an even number", num);
-                } else {
-                    println!("{} is an odd number", num);
-                }
-            }
+        let num: i64 = match trimmed.parse() {
+            Ok(n) => n,
             Err(_) => {
-                println!("Invalid input, please enter a valid integer");
+                eprintln!("error[E0308]: expected i32, found \"{}\"", trimmed);
+                continue;
             }
-        }
+        };
 
+        let parity = if num % 2 == 0 { "even" } else { "odd" };
+        let sign   = if num < 0 { "negative" } else { "non-negative" };
+        let prime  = is_prime(num);
+        let factors = factors_of(num);
+
+        println!("\n{} is {}  |  {}  |  prime: {}", num, parity, sign, prime);
+        println!("binary:   {:b}", num.unsigned_abs());
+        if !factors.is_empty() {
+            println!("divisors: {:?}", factors);
+        }
         println!();
     }
 }
