@@ -1,16 +1,32 @@
 use std::io;
 
 fn main() {
-    let mut input = String::new();
+    loop {
+        println!("Enter a number (or type 'exit' to quit):");
 
-    println!("Enter a number:");
-    io::stdin().read_line(&mut input).unwrap();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
 
-    let num: i32 = input.trim().parse().unwrap();
+        let trimmed = input.trim();
 
-    if num % 2 == 0 {
-        println!("Even number");
-    } else {
-        println!("Odd number");
+        if trimmed.eq_ignore_ascii_case("exit") {
+            println!("Goodbye!");
+            break;
+        }
+
+        match trimmed.parse::<i32>() {
+            Ok(num) => {
+                if num % 2 == 0 {
+                    println!("{} is an even number", num);
+                } else {
+                    println!("{} is an odd number", num);
+                }
+            }
+            Err(_) => {
+                println!("Invalid input, please enter a valid integer");
+            }
+        }
+
+        println!();
     }
 }
