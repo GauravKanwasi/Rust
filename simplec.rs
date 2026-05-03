@@ -1,42 +1,52 @@
-use std::io;
+use std::io::{self, Write};
+
+fn read_input(prompt: &str) -> String {
+    print!("{}", prompt);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).expect("Failed to read input");
+    input.trim().to_string()
+}
+
+fn parse_number(input: &str) -> Result<f64, String> {
+    input.parse::<f64>().map_err(|_| format!("'{}' is not a valid number", input))
+}
+
+fn calculate(num1: f64, num2: f64, op: &str) -> Result<f64, String> {
+    match op {
+        "add" | "+" => Ok(num1 + num2),
+        "sub" | "-" => Ok(num1 - num2),
+        "mul" | "multiply" | "*" => Ok(num1 * num2),
+        "div" | "divide" | "/" => {
+            if num2 == 0.0 {
+                Err("Division by zero is not allowed".to_string())
+            } else {
+                Ok(num1 / num2)
+            }
+        }
+        _ => Err(format!("Unknown operation '{}'. Use: add, sub, multiply, divide", op)),
+    }
+}
 
 fn main() {
-    // Read first number
-    println!("Enter the first number:");
-    let mut input1 = String::new();
-    io::stdin().read_line(&mut input1).expect("Failed to read input");
-    let num1: f64 = input1.trim().parse().expect("Please enter a valid number");
-
-    // Read second number
-    println!("Enter the second number:");
-    let mut input2 = String::new();
-    io::stdin().read_line(&mut input2).expect("Failed to read input");
-    let num2: f64 = input2.trim().parse().expect("Please enter a valid number");
-
-    // Read operation
-    println!("Choose an operation (add, sub, multiply, divide):");
-    let mut operation = String::new();
-    io::stdin().read_line(&mut operation).expect("Failed to read input");
-    let op = operation.trim().to_lowercase();
-
-    // Perform the selected operation
-    let result = match op.as_str() {
-        "add" => num1 + num2,
-        "sub" => num1 - num2,
-        "multiply" => num1 * num2,
-        "divide" => {
-            if num2 == 0.0 {
-                println!("Error: Division by zero is not allowed.");
-                return;
-            }
-            num1 / num2
-        }
-        _ => {
-            println!("Invalid operation selected.");
-            return;
+    let num1 = loop {
+        match parse_number(&read_input("Enter the first number: ")) {
+            Ok(n) => break n,
+            Err(e) => eprintln!("Error: {}", e),
         }
     };
 
-    // Output result
-    println!("Result: {}", result);
+    let num2 = loop {
+        match parse_number(&read_input("Enter the second number: ")) {
+            Ok(n) => break n,
+            Err(e) => eprintln!("Error: {}", e),
+        }
+    };
+
+    let op = read_input("Operation (add/sub/multiply/divide or +/-/*/÷): ").to_lowercase();
+
+    match calculate(num1, num2, &op) {
+        Ok(result) => println!("{} {} {} = {}", num1, op, num2, result),
+        Err(e) => eprintln!("Error: {}", e),
+    }
 }
