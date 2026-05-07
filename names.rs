@@ -1,43 +1,35 @@
-use std::env;
-use std::fs;
-use std::path::Path;
+use std::{env, fs, path::Path};
 
 fn main() {
-    // Get directory path from command-line arguments
-    let args: Vec<String> = env::args().collect();
-    let dir_path = if args.len() > 1 {
-        &args[1]
-    } else {
-        "."
-    };
+    let dir = env::args().nth(1).unwrap_or_else(|| ".".into());
+    let path = Path::new(&dir);
 
-    let path = Path::new(dir_path);
-
-    // Ensure the path exists and is a directory
     if !path.exists() {
-        eprintln!("Error: Path does not exist.");
+        eprintln!("path does not exist");
         return;
     }
 
     if !path.is_dir() {
-        eprintln!("Error: Path is not a directory.");
+        eprintln!("path is not a directory");
         return;
     }
 
-    // Read and list directory entries
-    match fs::read_dir(path) {
-        Ok(entries) => {
-            for entry in entries {
-                match entry {
-                    Ok(e) => {
-                        if let Some(name) = e.file_name().to_str() {
-                            println!("{}", name);
-                        }
-                    }
-                    Err(err) => eprintln!("Error reading entry: {}", err),
-                }
-            }
+    let entries = match fs::read_dir(path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            return;
         }
-        Err(err) => eprintln!("Error reading directory: {}", err),
+    };
+
+    let mut files = entries
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect::<Vec<_>>();
+
+    files.sort();
+
+    for file in files {
+        println!("{file}");
     }
 }
