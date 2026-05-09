@@ -1,24 +1,34 @@
-use std::fs::File;
-use std::io::{self, Read};
-use std::path::Path;
+use std::env;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+fn read_file(path: &Path) -> io::Result<String> {
+    fs::read_to_string(path)
+}
+
+fn build_path(parts: &[&str]) -> PathBuf {
+    parts.iter().collect()
+}
 
 fn main() -> io::Result<()> {
-    // Folder and file name
-    let folder_name = "data";
-    let file_name = "example.txt";
+    let args: Vec<String> = env::args().collect();
 
-    // Build the full file path: data/example.txt
-    let file_path = Path::new(folder_name).join(file_name);
+    let file_path = if args.len() > 1 {
+        PathBuf::from(&args[1])
+    } else {
+        build_path(&["data", "example.txt"])
+    };
 
-    // Open the file
-    let mut file = File::open(&file_path)?;
-
-    // Read file contents into a string
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-
-    // Print the contents
-    println!("Contents of {:?}:\n{}", file_path, contents);
+    match read_file(&file_path) {
+        Ok(contents) => {
+            println!("Path: {}\n", file_path.display());
+            println!("{}", contents);
+        }
+        Err(e) => {
+            eprintln!("Failed to read {}: {}", file_path.display(), e);
+        }
+    }
 
     Ok(())
 }
