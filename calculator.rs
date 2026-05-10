@@ -1,87 +1,95 @@
-use std::io;
+use std::io::{self, Write};
 
 fn main() {
-    println!("Interactive Calculator (Rust)");
-    println!("Type 'q' at any prompt to exit.\n");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("      Advanced Calculator     ");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Type 'q' anytime to quit\n");
 
     loop {
-        println!("Enter the first number:");
-        let first = match read_number_or_quit() {
-            Some(n) => n,
+        let first = match read_number("Enter first number") {
+            Some(v) => v,
             None => break,
         };
 
-        println!("Enter the second number:");
-        let second = match read_number_or_quit() {
-            Some(n) => n,
+        let operation = match read_operation() {
+            Some(v) => v,
             None => break,
         };
 
-        println!("Enter operation (+, -, *, /):");
-        let operation = match read_operation_or_quit() {
-            Some(op) => op,
+        let second = match read_number("Enter second number") {
+            Some(v) => v,
             None => break,
         };
 
         let result = match operation {
-            '+' => first + second,
-            '-' => first - second,
-            '*' => first * second,
-            '/' => {
-                if second == 0.0 {
-                    println!("Error: Division by zero is not allowed.\n");
-                    continue;
-                }
-                first / second
-            }
-            _ => {
-                println!("Invalid operation.\n");
-                continue;
-            }
+            '+' => Ok(first + second),
+            '-' => Ok(first - second),
+            '*' => Ok(first * second),
+            '/' if second != 0.0 => Ok(first / second),
+            '/' => Err("Division by zero is not allowed"),
+            '%' if second != 0.0 => Ok(first % second),
+            '%' => Err("Modulo by zero is not allowed"),
+            '^' => Ok(first.powf(second)),
+            _ => Err("Unsupported operation"),
         };
 
-        println!("Result: {}\n", result);
+        match result {
+            Ok(value) => {
+                println!("\nResult");
+                println!("{} {} {} = {}\n", first, operation, second, value);
+            }
+            Err(message) => {
+                println!("\nError: {}\n", message);
+            }
+        }
     }
 
-    println!("Calculator closed.");
+    println!("\nCalculator closed");
 }
 
-fn read_number_or_quit() -> Option<f64> {
+fn read_number(prompt: &str) -> Option<f64> {
     loop {
+        print!("{}: ", prompt);
+        io::stdout().flush().ok()?;
+
         let mut input = String::new();
         io::stdin().read_line(&mut input).ok()?;
 
-        let trimmed = input.trim();
+        let value = input.trim();
 
-        if trimmed.eq_ignore_ascii_case("q") {
+        if value.eq_ignore_ascii_case("q") {
             return None;
         }
 
-        match trimmed.parse::<f64>() {
+        match value.parse::<f64>() {
             Ok(num) => return Some(num),
-            Err(_) => println!("Invalid number. Enter a valid numeric value:"),
+            Err(_) => println!("Invalid number\n"),
         }
     }
 }
 
-fn read_operation_or_quit() -> Option<char> {
+fn read_operation() -> Option<char> {
     loop {
-        let mut op = String::new();
-        io::stdin().read_line(&mut op).ok()?;
+        print!("Operation (+, -, *, /, %, ^): ");
+        io::stdout().flush().ok()?;
 
-        let trimmed = op.trim();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).ok()?;
 
-        if trimmed.eq_ignore_ascii_case("q") {
+        let value = input.trim();
+
+        if value.eq_ignore_ascii_case("q") {
             return None;
         }
 
-        if trimmed.len() == 1 {
-            let ch = trimmed.chars().next().unwrap();
-            if "+-*/".contains(ch) {
-                return Some(ch);
+        if value.len() == 1 {
+            let op = value.chars().next()?;
+            if "+-*/%^".contains(op) {
+                return Some(op);
             }
         }
 
-        println!("Invalid operator. Enter one of (+, -, *, /):");
+        println!("Invalid operation\n");
     }
 }
