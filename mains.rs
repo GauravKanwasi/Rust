@@ -1,36 +1,45 @@
 use std::env;
+use std::error::Error;
 use std::io::{self, Write};
+use std::process::ExitCode;
 
-fn read_name_interactive() -> Result<String, String> {
+/// Prompts the user via stdin if no CLI argument is provided.
+fn read_name_interactive() -> Result<String, Box<dyn Error>> {
     print!("Enter your name: ");
-    io::stdout().flush().map_err(|_| "Output error")?;
+    io::stdout().flush()?;
 
     let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .map_err(|_| "Input error")?;
+    io::stdin().read_line(&mut input)?;
 
-    let name = input.trim().to_string();
+    let name = input.trim();
     if name.is_empty() {
         return Err("Name cannot be empty".into());
     }
 
-    Ok(name)
+    Ok(name.to_string())
 }
 
-fn main() {
-    let name = env::args()
-        .nth(1)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(Ok)
-        .unwrap_or_else(read_name_interactive);
+/// Retrieves the name from CLI arguments, falling back to interactive input.
+fn get_name() -> Result<String, Box<dyn Error>> {
+    if let Some(arg) = env::args().nth(1) {
+        let trimmed = arg.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    
+    read_name_interactive()
+}
 
-    match name {
-        Ok(n) => println!("Hello, {}! Welcome to Rust.", n),
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
+fn main() -> ExitCode {
+    match get_name() {
+        Ok(name) => {
+            println!("Hello, {name}! Welcome to Rust.");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("Error: {err}");
+            ExitCode::FAILURE
         }
     }
 }
