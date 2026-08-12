@@ -1,206 +1,227 @@
+use std::fmt;
 use std::io::{self, Write};
 
-fn precedence(op: char) -> i32 {
+#[derive(Debug, Clone, PartialEq)]
+enum Token {
+    Operand(String),
+    Operator(char),
+    LParen,
+    RParen,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Associativity {
+    Left,
+    Right,
+}
+
+#[derive(Debug)]
+enum ExprError {
+    MismatchedParenthesis(String),
+    UnknownCharacter(char),
+    EmptyExpression,
+}
+
+impl fmt::Display for ExprError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExprError::MismatchedParenthesis(msg) => write!(f, "Mismatched Parenthesis: {}", msg),
+            ExprError::UnknownCharacter(c) => write!(f, "Unknown character encountered: '{}'", c),
+            ExprError::EmptyExpression => write!(f, "Expression cannot be empty."),
+        }
+    }
+}
+
+/// Returns (precedence, associativity) for supported operators.
+fn operator_info(op: char) -> Option<(i32, Associativity)> {
     match op {
-        '+' | '-' => 1,
-        '*' | '/' => 2,
-        '^' => 3,
-        _ => 0,
+        '+' | '-' => Some((1, Associativity::Left)),
+        '*' | '/' => Some((2, Associativity::Left)),
+        '^'       => Some((3, Associativity::Right)),
+        _         => None,
     }
 }
 
-fn is_operator(c: char) -> bool {
-    matches!(c, '+' | '-' | '*' | '/' | '^')
-}
-
-fn infix_to_postfix(expr: &str) -> Result<String, String> {
-    let mut output: Vec<String> = Vec::new();
-    let mut stack: Vec<char> = Vec::new();
+/// Tokenizes an raw input string into a sequence of structured Tokens.
+fn tokenize(expr: &str) -> Result<Vec<Token>, ExprError> {
+    let mut tokens = Vec::new();
     let mut chars = expr.chars().peekable();
 
     while let Some(&c) = chars.peek() {
-        if c == ' ' {
-            chars.next();
-            continue;
+        match c {
+            ' ' | '\t' | '\r' | '\n' => {
+                chars.next();
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                chars.next();
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                chars.next();
+            }
+            c if operator_info(c).is_some() => {
+                tokens.push(Token::Operator(c));
+                chars.next();
+            }
+            c if c.is_alphanumeric() || c == '.' => {
+                let mut operand = String::new();
+                while let Some(&ch) = chars.peek() {
+                    if ch.is_alphanumeric() || ch == '.' {
+                        operand.push(ch);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                tokens.push(Token::Operand(operand));
+            }
+            _ => return Err(ExprError::UnknownCharacter(c)),
         }
+    }
 
-        if c.is_alphanumeric() || c == '.' {
-            let mut token = String::new();
-            while let Some(&ch) = chars.peek() {
-                if ch.is_alphanumeric() || ch == '.' {
-                    token.push(ch);
-                    chars.next();
-                } else {
-                    break;
+    if tokens.is_empty() {
+        return Err(ExprError::EmptyExpression);
+    }
+
+    Ok(tokens)
+}
+
+/// Executes the core Dijkstra's Shunting-Yard Algorithm.
+fn shunting_yard(tokens: &[Token], is_prefix: bool) -> Result<Vec<Token>, ExprError> {
+    let mut output: Vec<Token> = Vec::new();
+    let mut stack: Vec<Token> = Vec::new();
+
+    for token in tokens {
+        match token {
+            Token::Operand(_) => output.push(token.clone()),
+            Token::LParen => stack.push(token.clone()),
+            Token::RParen => {
+                let mut found = false;
+                while let Some(top) = stack.pop() {
+                    if top == Token::LParen {
+                        found = true;
+                        break;
+                    }
+                    output.push(top);
+                }
+                if !found {
+                    return Err(ExprError::MismatchedParenthesis("Missing '('".into()));
                 }
             }
-            output.push(token);
-        } else if c == '(' {
-            stack.push(c);
-            chars.next();
-        } else if c == ')' {
-            chars.next();
-            let mut found = false;
-            while let Some(top) = stack.pop() {
-                if top == '(' {
-                    found = true;
-                    break;
+            Token::Operator(op) => {
+                let (prec, assoc) = operator_info(*op).unwrap();
+
+                while let Some(Token::Operator(top_op)) = stack.last() {
+                    let (top_prec, _) = operator_info(*top_op).unwrap();
+
+                    let should_pop = if is_prefix {
+                        // Reverse operator precedence logic for prefix right-to-left processing
+                        top_prec > prec || (top_prec == prec && assoc == Associativity::Right)
+                    } else {
+                        // Standard left-to-right processing for postfix
+                        top_prec > prec || (top_prec == prec && assoc == Associativity::Left)
+                    };
+
+                    if should_pop {
+                        output.push(stack.pop().unwrap());
+                    } else {
+                        break;
+                    }
                 }
-                output.push(top.to_string());
+                stack.push(token.clone());
             }
-            if !found {
-                return Err("Mismatched parentheses: missing '('".to_string());
-            }
-        } else if is_operator(c) {
-            while let Some(&top) = stack.last() {
-                if top != '(' && (precedence(top) > precedence(c) || (precedence(top) == precedence(c) && c != '^')) {
-                    output.push(top.to_string());
-                    stack.pop();
-                } else {
-                    break;
-                }
-            }
-            stack.push(c);
-            chars.next();
-        } else {
-            return Err(format!("Unknown character: '{}'", c));
         }
     }
 
     while let Some(top) = stack.pop() {
-        if top == '(' {
-            return Err("Mismatched parentheses: missing ')'".to_string());
+        if top == Token::LParen {
+            return Err(ExprError::MismatchedParenthesis("Missing ')'".into()));
         }
-        output.push(top.to_string());
+        output.push(top);
     }
 
-    Ok(output.join(" "))
+    Ok(output)
 }
 
-fn infix_to_prefix(expr: &str) -> Result<String, String> {
-    let reversed: String = expr
-        .chars()
-        .rev()
-        .map(|c| match c {
-            '(' => ')',
-            ')' => '(',
-            other => other,
+pub fn infix_to_postfix(expr: &str) -> Result<String, String> {
+    let tokens = tokenize(expr).map_err(|e| e.to_string())?;
+    let postfix_tokens = shunting_yard(&tokens, false).map_err(|e| e.to_string())?;
+
+    Ok(format_tokens(&postfix_tokens))
+}
+
+pub fn infix_to_prefix(expr: &str) -> Result<String, String> {
+    let mut tokens = tokenize(expr).map_err(|e| e.to_string())?;
+
+    // 1. Reverse input token sequence and swap parenthetical meaning
+    tokens.reverse();
+    for token in &mut tokens {
+        match token {
+            Token::LParen => *token = Token::RParen,
+            Token::RParen => *token = Token::LParen,
+            _ => {}
+        }
+    }
+
+    // 2. Run adjusted Shunting-Yard
+    let mut prefix_tokens = shunting_yard(&tokens, true).map_err(|e| e.to_string())?;
+
+    // 3. Reverse output to produce Prefix notation
+    prefix_tokens.reverse();
+
+    Ok(format_tokens(&prefix_tokens))
+}
+
+fn format_tokens(tokens: &[Token]) -> String {
+    tokens
+        .iter()
+        .map(|t| match t {
+            Token::Operand(s) => s.clone(),
+            Token::Operator(c) => c.to_string(),
+            Token::LParen => "(".to_string(),
+            Token::RParen => ")".to_string(),
         })
-        .collect();
-
-    let postfix = infix_to_postfix_right_assoc(&reversed)?;
-
-    let result: String = postfix
-        .split_whitespace()
-        .rev()
-        .collect::<Vec<&str>>()
-        .join(" ");
-
-    Ok(result)
-}
-
-fn infix_to_postfix_right_assoc(expr: &str) -> Result<String, String> {
-    let mut output: Vec<String> = Vec::new();
-    let mut stack: Vec<char> = Vec::new();
-    let mut chars = expr.chars().peekable();
-
-    while let Some(&c) = chars.peek() {
-        if c == ' ' {
-            chars.next();
-            continue;
-        }
-
-        if c.is_alphanumeric() || c == '.' {
-            let mut token = String::new();
-            while let Some(&ch) = chars.peek() {
-                if ch.is_alphanumeric() || ch == '.' {
-                    token.push(ch);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            output.push(token);
-        } else if c == '(' {
-            stack.push(c);
-            chars.next();
-        } else if c == ')' {
-            chars.next();
-            let mut found = false;
-            while let Some(top) = stack.pop() {
-                if top == '(' {
-                    found = true;
-                    break;
-                }
-                output.push(top.to_string());
-            }
-            if !found {
-                return Err("Mismatched parentheses".to_string());
-            }
-        } else if is_operator(c) {
-            while let Some(&top) = stack.last() {
-                if top != '(' && precedence(top) > precedence(c) {
-                    output.push(top.to_string());
-                    stack.pop();
-                } else {
-                    break;
-                }
-            }
-            stack.push(c);
-            chars.next();
-        } else {
-            return Err(format!("Unknown character: '{}'", c));
-        }
-    }
-
-    while let Some(top) = stack.pop() {
-        if top == '(' {
-            return Err("Mismatched parentheses".to_string());
-        }
-        output.push(top.to_string());
-    }
-
-    Ok(output.join(" "))
+        .collect::<Vec<String>>()
+        .join(" ")
 }
 
 fn print_menu() {
     println!("╔══════════════════════════════════════╗");
-    println!("║     Infix Expression Converter        ║");
+    println!("║     Infix Expression Converter       ║");
     println!("╠══════════════════════════════════════╣");
-    println!("║  1. Convert to Postfix (Infix → RPN)  ║");
-    println!("║  2. Convert to Prefix  (Infix → PN)   ║");
-    println!("║  3. Convert Both                      ║");
-    println!("║  4. Exit                              ║");
+    println!("║  1. Convert to Postfix (Infix → RPN) ║");
+    println!("║  2. Convert to Prefix  (Infix → PN)  ║");
+    println!("║  3. Convert Both                     ║");
+    println!("║  4. Exit                             ║");
     println!("╚══════════════════════════════════════╝");
+}
+
+fn prompt(message: &str) -> String {
+    print!("{}", message);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_string()
 }
 
 fn main() {
     loop {
         println!();
         print_menu();
-        print!("\nSelect an option (1-4): ");
-        io::stdout().flush().unwrap();
-
-        let mut choice = String::new();
-        io::stdin().read_line(&mut choice).unwrap();
-        let choice = choice.trim();
+        let choice = prompt("\nSelect an option (1-4): ");
 
         if choice == "4" {
             println!("Goodbye!");
             break;
         }
 
-        if !matches!(choice, "1" | "2" | "3") {
+        if !matches!(choice.as_str(), "1" | "2" | "3") {
             println!("Invalid option. Please choose 1-4.");
             continue;
         }
 
-        print!("Enter infix expression: ");
-        io::stdout().flush().unwrap();
-
-        let mut expr = String::new();
-        io::stdin().read_line(&mut expr).unwrap();
-        let expr = expr.trim();
+        let expr = prompt("Enter infix expression: ");
 
         if expr.is_empty() {
             println!("Expression cannot be empty.");
@@ -210,23 +231,23 @@ fn main() {
         println!("\nInput (Infix): {}", expr);
         println!("{}", "─".repeat(40));
 
-        match choice {
-            "1" => match infix_to_postfix(expr) {
-                Ok(result) => println!("Postfix:       {}", result),
-                Err(e) => println!("Error: {}", e),
+        match choice.as_str() {
+            "1" => match infix_to_postfix(&expr) {
+                Ok(res) => println!("Postfix:       {}", res),
+                Err(err) => println!("Error: {}", err),
             },
-            "2" => match infix_to_prefix(expr) {
-                Ok(result) => println!("Prefix:        {}", result),
-                Err(e) => println!("Error: {}", e),
+            "2" => match infix_to_prefix(&expr) {
+                Ok(res) => println!("Prefix:        {}", res),
+                Err(err) => println!("Error: {}", err),
             },
             "3" => {
-                match infix_to_postfix(expr) {
-                    Ok(result) => println!("Postfix:       {}", result),
-                    Err(e) => println!("Postfix Error: {}", e),
+                match infix_to_postfix(&expr) {
+                    Ok(res) => println!("Postfix:       {}", res),
+                    Err(err) => println!("Postfix Error: {}", err),
                 }
-                match infix_to_prefix(expr) {
-                    Ok(result) => println!("Prefix:        {}", result),
-                    Err(e) => println!("Prefix Error:  {}", e),
+                match infix_to_prefix(&expr) {
+                    Ok(res) => println!("Prefix:        {}", res),
+                    Err(err) => println!("Prefix Error:  {}", err),
                 }
             }
             _ => {}
