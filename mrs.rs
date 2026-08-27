@@ -1,81 +1,39 @@
-use std::io;
+class Solution:
+    def lexGreaterPermutation(self, s: str, target: str) -> str:
+        n = len(s)
+        cnt = [0] * 26
+        for ch in s:
+            cnt[ord(ch) - 97] += 1
 
-fn read_matrix(rows: usize, cols: usize) -> Vec<Vec<i32>> {
-    let mut matrix = vec![vec![0; cols]; rows];
-    for i in 0..rows {
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        let values: Vec<i32> = input
-            .trim()
-            .split_whitespace()
-            .map(|x| x.parse().unwrap())
-            .collect();
-        for j in 0..cols {
-            matrix[i][j] = values[j];
-        }
-    }
-    matrix
-}
+        i = 0
+        while i < n:
+            idx = ord(target[i]) - 97
+            if cnt[idx] > 0:
+                cnt[idx] -= 1
+                i += 1
+            else:
+                break
 
-fn multiply_matrices(a: &Vec<Vec<i32>>, b: &Vec<Vec<i32>>) -> Vec<Vec<i32>> {
-    let rows = a.len();
-    let cols = b[0].len();
-    let common = b.len();
+        while i >= 0:
+            if i < n:
+                t_idx = ord(target[i]) - 97
+                chosen = -1
+                for c in range(t_idx + 1, 26):
+                    if cnt[c] > 0:
+                        chosen = c
+                        break
+                if chosen != -1:
+                    cnt[chosen] -= 1
+                    prefix = target[:i] + chr(97 + chosen)
+                    suffix = []
+                    for c in range(26):
+                        if cnt[c]:
+                            suffix.append(chr(97 + c) * cnt[c])
+                    return prefix + ''.join(suffix)
+            if i == 0:
+                break
+            prev_idx = ord(target[i - 1]) - 97
+            cnt[prev_idx] += 1
+            i -= 1
 
-    let mut result = vec![vec![0; cols]; rows];
-
-    for i in 0..rows {
-        for j in 0..cols {
-            for k in 0..common {
-                result[i][j] += a[i][k] * b[k][j];
-            }
-        }
-    }
-    result
-}
-
-fn main() {
-    let mut input = String::new();
-
-    println!("Enter rows and columns of first matrix:");
-    io::stdin().read_line(&mut input).unwrap();
-    let dims1: Vec<usize> = input
-        .trim()
-        .split_whitespace()
-        .map(|x| x.parse().unwrap())
-        .collect();
-
-    let (r1, c1) = (dims1[0], dims1[1]);
-
-    println!("Enter rows and columns of second matrix:");
-    input.clear();
-    io::stdin().read_line(&mut input).unwrap();
-    let dims2: Vec<usize> = input
-        .trim()
-        .split_whitespace()
-        .map(|x| x.parse().unwrap())
-        .collect();
-
-    let (r2, c2) = (dims2[0], dims2[1]);
-
-    if c1 != r2 {
-        println!("Matrix multiplication not possible!");
-        return;
-    }
-
-    println!("Enter first matrix:");
-    let m1 = read_matrix(r1, c1);
-
-    println!("Enter second matrix:");
-    let m2 = read_matrix(r2, c2);
-
-    let result = multiply_matrices(&m1, &m2);
-
-    println!("Result matrix:");
-    for row in result {
-        for val in row {
-            print!("{} ", val);
-        }
-        println!();
-    }
-}
+        return ""
