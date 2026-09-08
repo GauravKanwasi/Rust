@@ -1,23 +1,17 @@
-use std::io::{self, BufRead, Write};
+use std::env;
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Write};
+use std::process;
 
 fn process_line(line: &str) -> String {
-    line.chars()
-        .map(|c| match c {
-            'a'..='z' => (c as u8 - 32) as char,
-            _ => c,
-        })
-        .collect()
+    line.chars().flat_map(|c| c.to_uppercase()).collect()
 }
 
-fn main() {
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
+fn run<R: BufRead, W: Write>(reader: R, mut out: W) -> io::Result<()> {
+    let mut lines_processed: usize = 0;
+    let mut chars_converted: usize = 0;
 
-    let mut lines_processed = 0;
-    let mut chars_converted = 0;
-
-    for line in stdin.lock().lines() {
+    for line in reader.lines() {
         let line = match line {
             Ok(l) => l,
             Err(e) => {
@@ -26,10 +20,10 @@ fn main() {
             }
         };
 
-        let original_lowercase: usize = line.chars().filter(|c| c.is_lowercase()).count();
+        let original_lowercase = line.chars().filter(|c| c.is_lowercase()).count();
         let processed = process_line(&line);
 
-        writeln!(out, "{}", processed).expect("Failed to write output");
+        writeln!(out, "{}", processed)?;
 
         lines_processed += 1;
         chars_converted += original_lowercase;
@@ -39,6 +33,32 @@ fn main() {
         out,
         "\n[Summary] Lines processed: {} | Characters converted: {}",
         lines_processed, chars_converted
-    )
-    .expect("Failed to write summary");
+    )?;
+
+    out.flush()
+}
+
+fn main() {
+    let stdout = io::stdout();
+    let out = io::BufWriter::new(stdout.lock());
+
+    let args: Vec<String> = env::args().collect();
+
+    let result = if let Some(path) = args.get(1) {
+        match File::open(path) {
+            Ok(file) => run(BufReader::new(file), out),
+            Err(e) => {
+                eprintln!("Failed to open '{}': {}", path, e);
+                process::exit(1);
+            }
+        }
+    } else {
+        let stdin = io::stdin();
+        run(stdin.lock(), out)
+    };
+
+    if let Err(e) = result {
+        eprintln!("Fatal I/O error: {}", e);
+        process::exit(1);
+    }
 }
