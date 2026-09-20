@@ -1,3 +1,5 @@
+use rand::seq::SliceRandom;
+use rand::Rng;
 use std::io::{self, Write};
 
 const LOWERCASE: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
@@ -5,120 +7,216 @@ const UPPERCASE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS: &[u8] = b"0123456789";
 const SYMBOLS: &[u8] = b"!@#$%^&*()-_=+[]{}|;:,.<>?";
 
-fn lcg_rand(seed: &mut u64) -> u64 {
-    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-    *seed
+/// Which character classes to draw from. Lowercase is always included.
+#[derive(Clone, Copy)]
+struct CharsetOptions {
+    upper: bool,
+    digits: bool,
+    symbols: bool,
 }
 
-fn get_seed() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(12345678901234567890)
+impl CharsetOptions {
+    /// The full pool of allowed bytes given the selected options.
+    fn full_pool(&self) -> Vec<u8> {
+        let mut pool = LOWERCASE.to_vec();
+        if self.upper {
+            pool.extend_from_slice(UPPERCASE);
+        }
+        if self.digits {
+            pool.extend_from_slice(DIGITS);
+        }
+        if self.symbols {
+            pool.extend_from_slice(SYMBOLS);
+        }
+        pool
+    }
+
+    /// One sub-pool per *selected* category, used to guarantee at least
+    /// one character from each chosen class appears in the password.
+    fn required_pools(&self) -> Vec<&'static [u8]> {
+        let mut pools: Vec<&'static [u8]> = vec![LOWERCASE];
+        if self.upper {
+            pools.push(UPPERCASE);
+        }
+        if self.digits {
+            pools.push(DIGITS);
+        }
+        if self.symbols {
+            pools.push(SYMBOLS);
+        }
+        pools
+    }
 }
 
-fn generate_password(length: usize, use_upper: bool, use_digits: bool, use_symbols: bool) -> String {
-    let mut charset: Vec<u8> = LOWERCASE.to_vec();
-    let mut guaranteed: Vec<u8> = vec![LOWERCASE[0]];
+/// Generates a password using the OS-backed CSPRNG (via `rand::thread_rng`,
+/// which on modern `rand` is a ChaCha-based generator seeded from the OS).
+///
+/// Approach:
+/// 1. Place exactly one random character from each *selected* class
+///    (this guarantees the classes are represented without biasing
+///    their positions).
+/// 2. Fill the remaining slots from the full combined pool.
+/// 3. Shuffle the whole buffer with a Fisher-Yates shuffle driven by
+///    the CSPRNG, so guaranteed characters aren't predictably placed
+///    at the front.
+fn generate_password(length: usize, opts: CharsetOptions) -> String {
+    let mut rng = rand::thread_rng();
+    let full_pool = opts.full_pool();
+    let required = opts.required_pools();
 
-    if use_upper {
-        charset.extend_from_slice(UPPERCASE);
-        guaranteed.push(UPPERCASE[0]);
-    }
-    if use_digits {
-        charset.extend_from_slice(DIGITS);
-        guaranteed.push(DIGITS[0]);
-    }
-    if use_symbols {
-        charset.extend_from_slice(SYMBOLS);
-        guaranteed.push(SYMBOLS[0]);
-    }
+    debug_assert!(length >= required.len(), "length must fit all required classes");
 
-    let mut seed = get_seed();
     let mut password: Vec<u8> = Vec::with_capacity(length);
 
-    for g in &guaranteed {
-        let idx = (lcg_rand(&mut seed) as usize) % charset.len();
-        let _ = g;
-        password.push(charset[idx]);
+    for pool in &required {
+        let ch = pool[rng.gen_range(0..pool.len())];
+        password.push(ch);
     }
 
     while password.len() < length {
-        let idx = (lcg_rand(&mut seed) as usize) % charset.len();
-        password.push(charset[idx]);
+        let ch = full_pool[rng.gen_range(0..full_pool.len())];
+        password.push(ch);
     }
 
-    for i in (1..password.len()).rev() {
-        let j = (lcg_rand(&mut seed) as usize) % (i + 1);
-        password.swap(i, j);
-    }
+    password.shuffle(&mut rng);
 
-    for (i, slot) in guaranteed.iter().enumerate() {
-        let _ = slot;
-        let pool: &[u8] = match i {
-            0 => LOWERCASE,
-            1 if use_upper => UPPERCASE,
-            _ if use_digits && (!use_upper || i >= 2) => DIGITS,
-            _ => SYMBOLS,
-        };
-        let idx = (lcg_rand(&mut seed) as usize) % pool.len();
-        let pos = (lcg_rand(&mut seed) as usize) % password.len();
-        password[pos] = pool[idx];
-    }
-
-    String::from_utf8(password).unwrap()
+    // Safety: every byte comes from ASCII charset slices above.
+    String::from_utf8(password).expect("charset is pure ASCII")
 }
 
-fn prompt(msg: &str) -> String {
+/// Shannon entropy in bits, assuming uniform random selection from `pool_size`
+/// possible characters at each of `length` positions: log2(pool_size^length).
+fn entropy_bits(length: usize, pool_size: usize) -> f64 {
+    (length as f64) * (pool_size as f64).log2()
+}
+
+fn strength_label(bits: f64) -> &'static str {
+    match bits {
+        b if b < 40.0 => "Weak",
+        b if b < 60.0 => "Fair",
+        b if b < 80.0 => "Strong",
+        _ => "Very strong",
+    }
+}
+
+fn prompt(msg: &str) -> io::Result<String> {
     print!("{}", msg);
-    io::stdout().flush().unwrap();
+    io::stdout().flush()?;
     let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
 }
 
-fn ask_yes_no(msg: &str) -> bool {
+fn prompt_range(msg: &str, min: usize, max: usize) -> io::Result<usize> {
     loop {
-        let ans = prompt(msg).to_lowercase();
+        let input = prompt(msg)?;
+        match input.parse::<usize>() {
+            Ok(n) if (min..=max).contains(&n) => return Ok(n),
+            _ => println!("Enter a number between {} and {}.", min, max),
+        }
+    }
+}
+
+fn ask_yes_no(msg: &str) -> io::Result<bool> {
+    loop {
+        let ans = prompt(msg)?.to_lowercase();
         match ans.as_str() {
-            "y" | "yes" => return true,
-            "n" | "no" => return false,
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            "" => return Ok(true), // sensible default: Enter = yes
             _ => println!("Please enter y or n."),
         }
     }
 }
 
-fn main() {
+fn run() -> io::Result<()> {
     println!("╔══════════════════════════════════╗");
     println!("║      🔐 Password Generator        ║");
     println!("╚══════════════════════════════════╝\n");
 
-    let length: usize = loop {
-        let input = prompt("Password length (8–128): ");
-        match input.parse::<usize>() {
-            Ok(n) if (8..=128).contains(&n) => break n,
-            _ => println!("Enter a number between 8 and 128."),
-        }
+    // Minimum length must be able to fit lowercase + every enabled class,
+    // so ask for classes before length and validate accordingly.
+    let use_upper = ask_yes_no("Include uppercase letters? (Y/n): ")?;
+    let use_digits = ask_yes_no("Include digits? (Y/n): ")?;
+    let use_symbols = ask_yes_no("Include symbols? (Y/n): ")?;
+
+    let opts = CharsetOptions {
+        upper: use_upper,
+        digits: use_digits,
+        symbols: use_symbols,
     };
+    let min_length = opts.required_pools().len().max(8);
 
-    let use_upper = ask_yes_no("Include uppercase letters? (y/n): ");
-    let use_digits = ask_yes_no("Include digits? (y/n): ");
-    let use_symbols = ask_yes_no("Include symbols? (y/n): ");
+    let length = prompt_range(
+        &format!("Password length ({min_length}-128): "),
+        min_length,
+        128,
+    )?;
 
-    let count: usize = loop {
-        let input = prompt("How many passwords to generate? (1–20): ");
-        match input.parse::<usize>() {
-            Ok(n) if (1..=20).contains(&n) => break n,
-            _ => println!("Enter a number between 1 and 20."),
-        }
-    };
+    let count = prompt_range("How many passwords to generate? (1-20): ", 1, 20)?;
 
-    println!("\n Generated Passwords:\n");
+    let pool_size = opts.full_pool().len();
+    let bits = entropy_bits(length, pool_size);
+
+    println!("\nGenerated Passwords:\n");
     for i in 1..=count {
-        let pwd = generate_password(length, use_upper, use_digits, use_symbols);
+        let pwd = generate_password(length, opts);
         println!("  {}. {}", i, pwd);
     }
 
-    println!("\n Tip: Store passwords in a secure password manager.");
+    println!(
+        "\nEstimated entropy: {:.1} bits  ({}, alphabet size {})",
+        bits,
+        strength_label(bits),
+        pool_size
+    );
+    println!("Tip: Store passwords in a secure password manager, and use a unique one per account.");
+
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn respects_requested_length() {
+        let opts = CharsetOptions { upper: true, digits: true, symbols: true };
+        let pwd = generate_password(20, opts);
+        assert_eq!(pwd.len(), 20);
+    }
+
+    #[test]
+    fn contains_each_selected_class() {
+        let opts = CharsetOptions { upper: true, digits: true, symbols: true };
+        // Run a few times since generation is random.
+        for _ in 0..50 {
+            let pwd = generate_password(16, opts);
+            assert!(pwd.bytes().any(|b| LOWERCASE.contains(&b)));
+            assert!(pwd.bytes().any(|b| UPPERCASE.contains(&b)));
+            assert!(pwd.bytes().any(|b| DIGITS.contains(&b)));
+            assert!(pwd.bytes().any(|b| SYMBOLS.contains(&b)));
+        }
+    }
+
+    #[test]
+    fn lowercase_only_still_valid() {
+        let opts = CharsetOptions { upper: false, digits: false, symbols: false };
+        let pwd = generate_password(10, opts);
+        assert!(pwd.bytes().all(|b| LOWERCASE.contains(&b)));
+    }
+
+    #[test]
+    fn entropy_matches_formula() {
+        // 4 lowercase-only chars: log2(26^4) ≈ 18.8 bits
+        let bits = entropy_bits(4, 26);
+        assert!((bits - 18.8).abs() < 0.1);
+    }
 }
