@@ -5,7 +5,6 @@ const FILE_NAME: &str = "bucketlist.txt";
 
 fn main() {
     let mut bucket_list = load_bucket_list();
-
     loop {
         println!("\n--- Bucket List Menu ---");
         println!("1. Add item");
@@ -15,7 +14,6 @@ fn main() {
 
         print!("Enter your choice: ");
         io::stdout().flush().ok();
-
         let choice = read_input();
 
         match choice.as_str() {
@@ -67,7 +65,6 @@ fn view_items(list: &[String]) {
         println!("Bucket list is empty.");
         return;
     }
-
     println!("\nYour Bucket List:");
     for (i, item) in list.iter().enumerate() {
         println!("{}. {}", i + 1, item);
