@@ -15,7 +15,6 @@ fn main() {
         print!("Enter your choice: ");
         io::stdout().flush().ok();
         let choice = read_input();
-
         match choice.as_str() {
             "1" => add_item(&mut bucket_list),
             "2" => view_items(&bucket_list),
@@ -76,7 +75,6 @@ fn remove_item(list: &mut Vec<String>) {
         println!("Bucket list is empty.");
         return;
     }
-
     view_items(list);
 
     print!("Enter item number to remove: ");
