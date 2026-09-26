@@ -34,22 +34,18 @@ fn read_input() -> String {
     io::stdin().read_line(&mut input).ok();
     input.trim().to_string()
 }
-
 fn load_bucket_list() -> Vec<String> {
     fs::read_to_string(FILE_NAME)
         .map(|s| s.lines().map(str::to_owned).collect())
         .unwrap_or_default()
 }
-
 fn save_bucket_list(list: &[String]) {
     let data = list.join("\n");
     let _ = fs::write(FILE_NAME, data);
 }
-
 fn add_item(list: &mut Vec<String>) {
     print!("Enter a new bucket list item: ");
     io::stdout().flush().ok();
-
     let item = read_input();
     if !item.is_empty() {
         list.push(item);
@@ -58,7 +54,6 @@ fn add_item(list: &mut Vec<String>) {
         println!("Empty item not added.");
     }
 }
-
 fn view_items(list: &[String]) {
     if list.is_empty() {
         println!("Bucket list is empty.");
@@ -69,7 +64,6 @@ fn view_items(list: &[String]) {
         println!("{}. {}", i + 1, item);
     }
 }
-
 fn remove_item(list: &mut Vec<String>) {
     if list.is_empty() {
         println!("Bucket list is empty.");
