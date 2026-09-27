@@ -1,8 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
-
 const FILE_NAME: &str = "bucketlist.txt";
-
 fn main() {
     let mut bucket_list = load_bucket_list();
     loop {
@@ -28,7 +26,6 @@ fn main() {
         }
     }
 }
-
 fn read_input() -> String {
     let mut input = String::new();
     io::stdin().read_line(&mut input).ok();
@@ -70,10 +67,8 @@ fn remove_item(list: &mut Vec<String>) {
         return;
     }
     view_items(list);
-
     print!("Enter item number to remove: ");
     io::stdout().flush().ok();
-
     if let Ok(index) = read_input().parse::<usize>() {
         if index > 0 && index <= list.len() {
             list.remove(index - 1);
