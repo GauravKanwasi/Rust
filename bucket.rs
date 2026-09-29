@@ -15,8 +15,6 @@ impl Item {
         Self { text, done: false }
     }
 
-    /// Parses "[x] text" / "[ ] text". Plain lines (old file format) are
-    /// treated as not-done items so existing lists keep working.
     fn parse(line: &str) -> Option<Self> {
         let line = line.trim();
         if line.is_empty() {
@@ -55,8 +53,6 @@ impl BucketList {
         Self { items, dirty: false }
     }
 
-    /// Writes to a temp file first, then renames, so a crash mid-write
-    /// can't corrupt the existing list.
     fn save(&mut self) -> io::Result<()> {
         let data: Vec<String> = self.items.iter().map(Item::serialize).collect();
         fs::write(TMP_FILE_NAME, data.join("\n"))?;
@@ -124,7 +120,6 @@ fn confirm(msg: &str) -> bool {
     )
 }
 
-/// Asks for a 1-based item number and returns a validated 0-based index.
 fn select_index(list: &BucketList, msg: &str) -> Option<usize> {
     if list.items.is_empty() {
         println!("Bucket list is empty.");
