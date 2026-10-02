@@ -1,604 +1,575 @@
-use std::collections::HashMap;
-use std::fmt;
 use std::io::{self, Write};
+
+#[derive(Debug, Clone, Copy)]
+enum Command {
+    Quit,
+    Help,
+    History,
+    Clear,
+}
+
+enum Input<T> {
+    Value(T),
+    Command(Command),
+    EndOfInput,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
-    Num(f64),
-    Ident(String),
+    Number(f64),
+    Identifier(String),
     Plus,
     Minus,
-    Star,
-    Slash,
-    Percent,
-    Caret,
-    Bang,
-    LParen,
-    RParen,
+    Multiply,
+    Divide,
+    Modulo,
+    FloorDivide,
+    Power,
+    Factorial,
+    LeftParen,
+    RightParen,
     Comma,
-    Assign,
 }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Token::Num(n) => write!(f, "{}", n),
-            Token::Ident(s) => write!(f, "{}", s),
-            Token::Plus => write!(f, "+"),
-            Token::Minus => write!(f, "-"),
-            Token::Star => write!(f, "*"),
-            Token::Slash => write!(f, "/"),
-            Token::Percent => write!(f, "%"),
-            Token::Caret => write!(f, "^"),
-            Token::Bang => write!(f, "!"),
-            Token::LParen => write!(f, "("),
-            Token::RParen => write!(f, ")"),
-            Token::Comma => write!(f, ","),
-            Token::Assign => write!(f, "="),
+struct Parser {
+    tokens: Vec<Token>,
+    position: usize,
+    answer: Option<f64>,
+}
+
+impl Parser {
+    fn new(tokens: Vec<Token>, answer: Option<f64>) -> Self {
+        Self {
+            tokens,
+            position: 0,
+            answer,
         }
     }
-}
 
-#[derive(Debug)]
-enum CalcError {
-    UnexpectedChar(char),
-    InvalidNumber(String),
-    UnexpectedToken(String),
-    UnexpectedEnd,
-    UnknownVariable(String),
-    UnknownFunction(String),
-    WrongArgCount { name: String, expected: usize, got: usize },
-    DivisionByZero,
-    ModuloByZero,
-    Domain(&'static str),
-    Overflow,
-    ReservedName(String),
-}
-
-impl fmt::Display for CalcError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            CalcError::UnexpectedChar(c) => write!(f, "Unexpected character '{}'", c),
-            CalcError::InvalidNumber(s) => write!(f, "Invalid number '{}'", s),
-            CalcError::UnexpectedToken(s) => write!(f, "Unexpected '{}'", s),
-            CalcError::UnexpectedEnd => write!(f, "Expression ended unexpectedly"),
-            CalcError::UnknownVariable(s) => write!(f, "Unknown variable '{}'", s),
-            CalcError::UnknownFunction(s) => write!(f, "Unknown function '{}'", s),
-            CalcError::WrongArgCount { name, expected, got } => {
-                write!(f, "'{}' expects {} argument(s), got {}", name, expected, got)
-            }
-            CalcError::DivisionByZero => write!(f, "Division by zero is not allowed"),
-            CalcError::ModuloByZero => write!(f, "Modulo by zero is not allowed"),
-            CalcError::Domain(msg) => write!(f, "Math domain error: {}", msg),
-            CalcError::Overflow => write!(f, "Result is too large or undefined"),
-            CalcError::ReservedName(s) => write!(f, "'{}' is a reserved name", s),
+    fn parse(&mut self) -> Result<f64, String> {
+        if self.tokens.is_empty() {
+            return Err("enter an expression".to_string());
         }
+
+        let value = self.parse_addition()?;
+
+        if let Some(token) = self.peek() {
+            return Err(format!("unexpected token: {}", describe_token(token)));
+        }
+
+        finite(value)
     }
-}
 
-fn constant(name: &str) -> Option<f64> {
-    match name {
-        "pi" => Some(std::f64::consts::PI),
-        "e" => Some(std::f64::consts::E),
-        "tau" => Some(std::f64::consts::TAU),
-        _ => None,
-    }
-}
+    // Addition and subtraction have the lowest binary precedence.
+    fn parse_addition(&mut self) -> Result<f64, String> {
+        let mut value = self.parse_multiplication()?;
 
-fn tokenize(input: &str) -> Result<Vec<Token>, CalcError> {
-    let chars: Vec<char> = input.chars().collect();
-    let mut tokens = Vec::new();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let c = chars[i];
-
-        if c.is_whitespace() {
-            i += 1;
-        } else if c.is_ascii_digit() || c == '.' {
-            let start = i;
-            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                i += 1;
-            }
-            let text: String = chars[start..i].iter().collect();
-            let num = text
-                .parse::<f64>()
-                .map_err(|_| CalcError::InvalidNumber(text.clone()))?;
-            tokens.push(Token::Num(num));
-        } else if c.is_ascii_alphabetic() || c == '_' {
-            let start = i;
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
-                i += 1;
-            }
-            let text: String = chars[start..i].iter().collect();
-            tokens.push(Token::Ident(text.to_lowercase()));
-        } else {
-            let token = match c {
-                '+' => Token::Plus,
-                '-' => Token::Minus,
-                '*' => Token::Star,
-                '/' => Token::Slash,
-                '%' => Token::Percent,
-                '^' => Token::Caret,
-                '!' => Token::Bang,
-                '(' => Token::LParen,
-                ')' => Token::RParen,
-                ',' => Token::Comma,
-                '=' => Token::Assign,
-                _ => return Err(CalcError::UnexpectedChar(c)),
+        loop {
+            let operator = match self.peek() {
+                Some(Token::Plus) => Some('+'),
+                Some(Token::Minus) => Some('-'),
+                _ => None,
             };
-            tokens.push(token);
-            i += 1;
+
+            let Some(operator) = operator else {
+                break;
+            };
+
+            self.take();
+            let right = self.parse_multiplication()?;
+            value = calculate_binary(value, right, operator)?;
         }
+
+        Ok(value)
     }
 
-    Ok(tokens)
-}
+    // Multiplication, division, remainder, and floor division.
+    fn parse_multiplication(&mut self) -> Result<f64, String> {
+        let mut value = self.parse_unary()?;
 
-fn expect_args(name: &str, args: &[f64], expected: usize) -> Result<(), CalcError> {
-    if args.len() == expected {
-        Ok(())
-    } else {
-        Err(CalcError::WrongArgCount {
-            name: name.to_string(),
-            expected,
-            got: args.len(),
-        })
-    }
-}
+        loop {
+            let operator = match self.peek() {
+                Some(Token::Multiply) => Some('*'),
+                Some(Token::Divide) => Some('/'),
+                Some(Token::Modulo) => Some('%'),
+                Some(Token::FloorDivide) => Some('⌊'),
+                _ => None,
+            };
 
-fn apply_function(name: &str, args: &[f64]) -> Result<f64, CalcError> {
-    match name {
-        "sqrt" => {
-            expect_args(name, args, 1)?;
-            if args[0] < 0.0 {
-                Err(CalcError::Domain("sqrt of a negative number"))
-            } else {
-                Ok(args[0].sqrt())
-            }
-        }
-        "abs" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].abs())
-        }
-        "sin" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].sin())
-        }
-        "cos" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].cos())
-        }
-        "tan" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].tan())
-        }
-        "asin" => {
-            expect_args(name, args, 1)?;
-            if args[0].abs() > 1.0 {
-                Err(CalcError::Domain("asin needs a value between -1 and 1"))
-            } else {
-                Ok(args[0].asin())
-            }
-        }
-        "acos" => {
-            expect_args(name, args, 1)?;
-            if args[0].abs() > 1.0 {
-                Err(CalcError::Domain("acos needs a value between -1 and 1"))
-            } else {
-                Ok(args[0].acos())
-            }
-        }
-        "atan" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].atan())
-        }
-        "ln" => {
-            expect_args(name, args, 1)?;
-            if args[0] <= 0.0 {
-                Err(CalcError::Domain("ln needs a positive value"))
-            } else {
-                Ok(args[0].ln())
-            }
-        }
-        "log" => {
-            expect_args(name, args, 1)?;
-            if args[0] <= 0.0 {
-                Err(CalcError::Domain("log needs a positive value"))
-            } else {
-                Ok(args[0].log10())
-            }
-        }
-        "log2" => {
-            expect_args(name, args, 1)?;
-            if args[0] <= 0.0 {
-                Err(CalcError::Domain("log2 needs a positive value"))
-            } else {
-                Ok(args[0].log2())
-            }
-        }
-        "exp" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].exp())
-        }
-        "floor" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].floor())
-        }
-        "ceil" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].ceil())
-        }
-        "round" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].round())
-        }
-        "deg" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].to_degrees())
-        }
-        "rad" => {
-            expect_args(name, args, 1)?;
-            Ok(args[0].to_radians())
-        }
-        "min" => {
-            expect_args(name, args, 2)?;
-            Ok(args[0].min(args[1]))
-        }
-        "max" => {
-            expect_args(name, args, 2)?;
-            Ok(args[0].max(args[1]))
-        }
-        "pow" => {
-            expect_args(name, args, 2)?;
-            power(args[0], args[1])
-        }
-        _ => Err(CalcError::UnknownFunction(name.to_string())),
-    }
-}
+            let Some(operator) = operator else {
+                break;
+            };
 
-fn power(base: f64, exp: f64) -> Result<f64, CalcError> {
-    if base == 0.0 && exp < 0.0 {
-        return Err(CalcError::DivisionByZero);
-    }
-    if base < 0.0 && exp.fract() != 0.0 {
-        return Err(CalcError::Domain("negative base with fractional exponent"));
-    }
-    let result = base.powf(exp);
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(CalcError::Overflow)
-    }
-}
+            self.take();
+            let right = self.parse_unary()?;
+            value = calculate_binary(value, right, operator)?;
+        }
 
-fn factorial(n: f64) -> Result<f64, CalcError> {
-    if n < 0.0 || n.fract() != 0.0 {
-        return Err(CalcError::Domain("factorial needs a non-negative integer"));
-    }
-    if n > 170.0 {
-        return Err(CalcError::Overflow);
-    }
-    let mut result = 1.0;
-    for i in 2..=(n as u64) {
-        result *= i as f64;
-    }
-    Ok(result)
-}
-
-struct Parser<'a> {
-    tokens: &'a [Token],
-    pos: usize,
-    vars: &'a HashMap<String, f64>,
-}
-
-impl<'a> Parser<'a> {
-    fn peek(&self) -> Option<&'a Token> {
-        self.tokens.get(self.pos)
+        Ok(value)
     }
 
-    fn next(&mut self) -> Option<&'a Token> {
-        let token = self.tokens.get(self.pos);
-        if token.is_some() {
-            self.pos += 1;
-        }
-        token
-    }
-
-    fn expect_rparen(&mut self) -> Result<(), CalcError> {
-        match self.next() {
-            Some(Token::RParen) => Ok(()),
-            Some(t) => Err(CalcError::UnexpectedToken(t.to_string())),
-            None => Err(CalcError::UnexpectedEnd),
-        }
-    }
-
-    fn parse_expr(&mut self) -> Result<f64, CalcError> {
-        let mut left = self.parse_term()?;
-        while let Some(token) = self.peek() {
-            match token {
-                Token::Plus => {
-                    self.pos += 1;
-                    left += self.parse_term()?;
-                }
-                Token::Minus => {
-                    self.pos += 1;
-                    left -= self.parse_term()?;
-                }
-                _ => break,
-            }
-        }
-        Ok(left)
-    }
-
-    fn parse_term(&mut self) -> Result<f64, CalcError> {
-        let mut left = self.parse_unary()?;
-        while let Some(token) = self.peek() {
-            match token {
-                Token::Star => {
-                    self.pos += 1;
-                    left *= self.parse_unary()?;
-                }
-                Token::Slash => {
-                    self.pos += 1;
-                    let right = self.parse_unary()?;
-                    if right == 0.0 {
-                        return Err(CalcError::DivisionByZero);
-                    }
-                    left /= right;
-                }
-                Token::Percent => {
-                    self.pos += 1;
-                    let right = self.parse_unary()?;
-                    if right == 0.0 {
-                        return Err(CalcError::ModuloByZero);
-                    }
-                    left %= right;
-                }
-                _ => break,
-            }
-        }
-        Ok(left)
-    }
-
-    fn parse_unary(&mut self) -> Result<f64, CalcError> {
+    fn parse_unary(&mut self) -> Result<f64, String> {
         match self.peek() {
-            Some(Token::Minus) => {
-                self.pos += 1;
-                Ok(-self.parse_unary()?)
-            }
             Some(Token::Plus) => {
-                self.pos += 1;
+                self.take();
                 self.parse_unary()
+            }
+            Some(Token::Minus) => {
+                self.take();
+                finite(-self.parse_unary()?)
             }
             _ => self.parse_power(),
         }
     }
 
-    fn parse_power(&mut self) -> Result<f64, CalcError> {
+    // Power is right-associative: 2 ^ 3 ^ 2 means 2 ^ (3 ^ 2).
+    fn parse_power(&mut self) -> Result<f64, String> {
         let base = self.parse_postfix()?;
-        if let Some(Token::Caret) = self.peek() {
-            self.pos += 1;
-            let exp = self.parse_unary()?;
-            return power(base, exp);
+
+        if matches!(self.peek(), Some(Token::Power)) {
+            self.take();
+            let exponent = self.parse_unary()?;
+            return finite(base.powf(exponent));
         }
+
         Ok(base)
     }
 
-    fn parse_postfix(&mut self) -> Result<f64, CalcError> {
+    fn parse_postfix(&mut self) -> Result<f64, String> {
         let mut value = self.parse_primary()?;
-        while let Some(Token::Bang) = self.peek() {
-            self.pos += 1;
+
+        while matches!(self.peek(), Some(Token::Factorial)) {
+            self.take();
             value = factorial(value)?;
         }
+
         Ok(value)
     }
 
-    fn parse_primary(&mut self) -> Result<f64, CalcError> {
-        match self.next() {
-            Some(Token::Num(n)) => Ok(*n),
-            Some(Token::Ident(name)) => {
-                if let Some(Token::LParen) = self.peek() {
-                    self.pos += 1;
-                    let args = self.parse_args()?;
-                    apply_function(name, &args)
+    fn parse_primary(&mut self) -> Result<f64, String> {
+        match self.take() {
+            Some(Token::Number(value)) => Ok(value),
+            Some(Token::Identifier(name)) => {
+                if matches!(self.peek(), Some(Token::LeftParen)) {
+                    self.take();
+                    self.parse_function(&name)
                 } else {
-                    self.lookup(name)
+                    self.constant(&name)
                 }
             }
-            Some(Token::LParen) => {
-                let value = self.parse_expr()?;
-                self.expect_rparen()?;
-                Ok(value)
+            Some(Token::LeftParen) => {
+                let value = self.parse_addition()?;
+
+                match self.take() {
+                    Some(Token::RightParen) => Ok(value),
+                    Some(token) => Err(format!(
+                        "expected ')', found {}",
+                        describe_token(&token)
+                    )),
+                    None => Err("missing ')'".to_string()),
+                }
             }
-            Some(t) => Err(CalcError::UnexpectedToken(t.to_string())),
-            None => Err(CalcError::UnexpectedEnd),
+            Some(token) => Err(format!(
+                "expected a number, found {}",
+                describe_token(&token)
+            )),
+            None => Err("expected a value".to_string()),
         }
     }
 
-    fn parse_args(&mut self) -> Result<Vec<f64>, CalcError> {
-        let mut args = Vec::new();
-        if let Some(Token::RParen) = self.peek() {
-            self.pos += 1;
-            return Ok(args);
-        }
-        loop {
-            args.push(self.parse_expr()?);
-            match self.next() {
-                Some(Token::Comma) => continue,
-                Some(Token::RParen) => break,
-                Some(t) => return Err(CalcError::UnexpectedToken(t.to_string())),
-                None => return Err(CalcError::UnexpectedEnd),
-            }
-        }
-        Ok(args)
-    }
+    fn parse_function(&mut self, name: &str) -> Result<f64, String> {
+        let first = self.parse_addition()?;
 
-    fn lookup(&self, name: &str) -> Result<f64, CalcError> {
-        if let Some(c) = constant(name) {
-            return Ok(c);
-        }
-        self.vars
-            .get(name)
-            .copied()
-            .ok_or_else(|| CalcError::UnknownVariable(name.to_string()))
-    }
-}
+        let second = if matches!(self.peek(), Some(Token::Comma)) {
+            self.take();
+            Some(self.parse_addition()?)
+        } else {
+            None
+        };
 
-fn evaluate(
-    line: &str,
-    vars: &HashMap<String, f64>,
-) -> Result<(Option<String>, f64), CalcError> {
-    let tokens = tokenize(line)?;
-
-    let (target, body) = match (tokens.get(0), tokens.get(1)) {
-        (Some(Token::Ident(name)), Some(Token::Assign)) => (Some(name.clone()), &tokens[2..]),
-        _ => (None, &tokens[..]),
-    };
-
-    if let Some(name) = &target {
-        if constant(name).is_some() || name == "ans" {
-            return Err(CalcError::ReservedName(name.clone()));
+        match self.take() {
+            Some(Token::RightParen) => apply_function(name, first, second),
+            Some(token) => Err(format!(
+                "expected ')', found {}",
+                describe_token(&token)
+            )),
+            None => Err(format!("missing ')' after {}", name)),
         }
     }
 
-    let mut parser = Parser {
-        tokens: body,
-        pos: 0,
-        vars,
-    };
-    let value = parser.parse_expr()?;
-
-    if let Some(token) = parser.peek() {
-        return Err(CalcError::UnexpectedToken(token.to_string()));
-    }
-    if !value.is_finite() {
-        return Err(CalcError::Overflow);
+    fn constant(&self, name: &str) -> Result<f64, String> {
+        match name {
+            "pi" => Ok(std::f64::consts::PI),
+            "tau" => Ok(std::f64::consts::TAU),
+            "e" => Ok(std::f64::consts::E),
+            "ans" => self
+                .answer
+                .ok_or_else(|| "there is no previous answer yet".to_string()),
+            _ => Err(format!("unknown constant or function: {}", name)),
+        }
     }
 
-    Ok((target, value))
-}
-
-fn format_number(v: f64) -> String {
-    if v == v.trunc() && v.abs() < 1e15 {
-        format!("{}", v as i64)
-    } else if v.abs() >= 1e15 || v.abs() < 1e-9 {
-        format!("{:e}", v)
-    } else {
-        let s = format!("{:.10}", v);
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.position)
     }
-}
 
-fn print_banner() {
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("          Advanced Calculator         ");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Type an expression, 'help' for more, 'q' to quit\n");
-}
+    fn take(&mut self) -> Option<Token> {
+        let token = self.tokens.get(self.position).cloned();
 
-fn print_help() {
-    println!("\nOperators   + - * / % ^ !   and parentheses");
-    println!("Constants   pi, e, tau, ans (last result)");
-    println!("Functions   sqrt abs sin cos tan asin acos atan");
-    println!("            ln log log2 exp floor ceil round deg rad");
-    println!("            min(a, b)  max(a, b)  pow(a, b)");
-    println!("Variables   x = 5 * 2   then use x in later expressions");
-    println!("Commands    help, history, vars, clear, q\n");
-    println!("Examples    2 + 3 * (4 - 1)^2");
-    println!("            sqrt(16) + 5!");
-    println!("            ans / 3\n");
-}
+        if token.is_some() {
+            self.position += 1;
+        }
 
-fn print_history(history: &[String]) {
-    if history.is_empty() {
-        println!("No history yet\n");
-        return;
+        token
     }
-    println!();
-    for (i, entry) in history.iter().enumerate() {
-        println!("{:>3}. {}", i + 1, entry);
-    }
-    println!();
-}
-
-fn print_vars(vars: &HashMap<String, f64>) {
-    if vars.is_empty() {
-        println!("No variables defined\n");
-        return;
-    }
-    let mut names: Vec<&String> = vars.keys().collect();
-    names.sort();
-    println!();
-    for name in names {
-        println!("{} = {}", name, format_number(vars[name]));
-    }
-    println!();
 }
 
 fn main() {
     print_banner();
 
-    let mut vars: HashMap<String, f64> = HashMap::new();
     let mut history: Vec<String> = Vec::new();
-    let stdin = io::stdin();
+    let mut last_result: Option<f64> = None;
 
     loop {
-        print!("calc> ");
-        if io::stdout().flush().is_err() {
-            break;
-        }
+        let expression = match read_line("Expression") {
+            Input::Value(value) => value,
+            Input::Command(command) => {
+                if !handle_command(command, &history) {
+                    break;
+                }
+                continue;
+            }
+            Input::EndOfInput => break,
+        };
 
-        let mut line = String::new();
-        match stdin.read_line(&mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
-        }
-
-        let line = line.trim();
-        if line.is_empty() {
+        if expression.trim().is_empty() {
+            println!("Please enter an expression.\n");
             continue;
         }
 
-        match line.to_lowercase().as_str() {
-            "q" | "quit" | "exit" => break,
-            "help" | "?" => {
-                print_help();
-                continue;
+        match evaluate(&expression, last_result) {
+            Ok(value) => {
+                let record = format!("{} = {}", expression, value);
+                println!("\nResult: {}\n", value);
+                history.push(record);
+                last_result = Some(value);
             }
-            "history" => {
-                print_history(&history);
-                continue;
+            Err(message) => {
+                let record = format!("{} -> Error: {}", expression, message);
+                println!("\nError: {}\n", message);
+                history.push(record);
             }
-            "vars" => {
-                print_vars(&vars);
-                continue;
-            }
-            "clear" => {
-                vars.clear();
-                history.clear();
-                println!("Variables and history cleared\n");
-                continue;
-            }
-            _ => {}
-        }
-
-        match evaluate(line, &vars) {
-            Ok((target, value)) => {
-                let shown = format_number(value);
-                match target {
-                    Some(name) => {
-                        println!("{} = {}\n", name, shown);
-                        vars.insert(name, value);
-                    }
-                    None => println!("= {}\n", shown),
-                }
-                vars.insert("ans".to_string(), value);
-                history.push(format!("{} = {}", line, shown));
-            }
-            Err(e) => println!("Error: {}\n", e),
         }
     }
 
-    println!("\nCalculator closed");
+    println!("\nCalculator closed.");
+}
+
+fn evaluate(expression: &str, answer: Option<f64>) -> Result<f64, String> {
+    let tokens = tokenize(expression)?;
+    Parser::new(tokens, answer).parse()
+}
+
+fn tokenize(input: &str) -> Result<Vec<Token>, String> {
+    let characters: Vec<char> = input.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+
+    while index < characters.len() {
+        let current = characters[index];
+
+        if current.is_whitespace() {
+            index += 1;
+            continue;
+        }
+
+        if current.is_ascii_digit() || current == '.' {
+            let start = index;
+            let mut decimal_points = 0;
+
+            while index < characters.len()
+                && (characters[index].is_ascii_digit() || characters[index] == '.')
+            {
+                if characters[index] == '.' {
+                    decimal_points += 1;
+                }
+                index += 1;
+            }
+
+            if decimal_points > 1 {
+                return Err("a number cannot contain multiple decimal points".to_string());
+            }
+
+            if index < characters.len() && matches!(characters[index], 'e' | 'E') {
+                index += 1;
+
+                if index < characters.len() && matches!(characters[index], '+' | '-') {
+                    index += 1;
+                }
+
+                let exponent_start = index;
+                while index < characters.len() && characters[index].is_ascii_digit() {
+                    index += 1;
+                }
+
+                if exponent_start == index {
+                    return Err("invalid scientific notation".to_string());
+                }
+            }
+
+            let text: String = characters[start..index].iter().collect();
+            let number = text
+                .parse::<f64>()
+                .map_err(|_| format!("invalid number: {}", text))?;
+
+            if !number.is_finite() {
+                return Err("numbers must be finite".to_string());
+            }
+
+            tokens.push(Token::Number(number));
+            continue;
+        }
+
+        if current.is_ascii_alphabetic() || current == '_' {
+            let start = index;
+
+            while index < characters.len()
+                && (characters[index].is_ascii_alphanumeric() || characters[index] == '_')
+            {
+                index += 1;
+            }
+
+            let name: String = characters[start..index]
+                .iter()
+                .collect::<String>()
+                .to_ascii_lowercase();
+            tokens.push(Token::Identifier(name));
+            continue;
+        }
+
+        let token = match current {
+            '+' => Token::Plus,
+            '-' => Token::Minus,
+            '*' if characters.get(index + 1) == Some(&'*') => {
+                index += 1;
+                Token::Power
+            }
+            '*' | '×' => Token::Multiply,
+            '/' if characters.get(index + 1) == Some(&'/') => {
+                index += 1;
+                Token::FloorDivide
+            }
+            '/' | '÷' => Token::Divide,
+            '%' => Token::Modulo,
+            '^' => Token::Power,
+            '!' => Token::Factorial,
+            '(' => Token::LeftParen,
+            ')' => Token::RightParen,
+            ',' => Token::Comma,
+            _ => return Err(format!("unsupported character: '{}'", current)),
+        };
+
+        tokens.push(token);
+        index += 1;
+    }
+
+    Ok(tokens)
+}
+
+fn calculate_binary(left: f64, right: f64, operator: char) -> Result<f64, String> {
+    if matches!(operator, '/' | '%' | '⌊') && right == 0.0 {
+        return Err("division by zero is not allowed".to_string());
+    }
+
+    let result = match operator {
+        '+' => left + right,
+        '-' => left - right,
+        '*' => left * right,
+        '/' => left / right,
+        '%' => left % right,
+        '⌊' => (left / right).floor(),
+        _ => unreachable!(),
+    };
+
+    finite(result)
+}
+
+fn apply_function(name: &str, first: f64, second: Option<f64>) -> Result<f64, String> {
+    let result = match (name, second) {
+        ("sqrt", None) => first.sqrt(),
+        ("cbrt", None) => first.cbrt(),
+        ("abs", None) => first.abs(),
+        ("sin", None) => first.sin(),
+        ("cos", None) => first.cos(),
+        ("tan", None) => first.tan(),
+        ("asin", None) => first.asin(),
+        ("acos", None) => first.acos(),
+        ("atan", None) => first.atan(),
+        ("sinh", None) => first.sinh(),
+        ("cosh", None) => first.cosh(),
+        ("tanh", None) => first.tanh(),
+        ("ln", None) => first.ln(),
+        ("log", None) | ("log10", None) => first.log10(),
+        ("log2", None) => first.log2(),
+        ("exp", None) => first.exp(),
+        ("floor", None) => first.floor(),
+        ("ceil", None) => first.ceil(),
+        ("round", None) => first.round(),
+        ("sign", None) => first.signum(),
+        ("percent", None) => first / 100.0,
+        ("min", Some(value)) => first.min(value),
+        ("max", Some(value)) => first.max(value),
+        ("hypot", Some(value)) => first.hypot(value),
+        ("atan2", Some(value)) => first.atan2(value),
+        (name, Some(_)) => return Err(format!("{}() accepts one argument", name)),
+        (name, None) => return Err(format!("unknown function: {}", name)),
+    };
+
+    finite(result)
+}
+
+fn factorial(value: f64) -> Result<f64, String> {
+    if value < 0.0 || value.fract() != 0.0 {
+        return Err("factorial requires a non-negative whole number".to_string());
+    }
+
+    if value > 170.0 {
+        return Err("factorial is limited to 170! for finite results".to_string());
+    }
+
+    let mut result = 1.0;
+    let mut number = 2.0;
+
+    while number <= value {
+        result *= number;
+        number += 1.0;
+    }
+
+    Ok(result)
+}
+
+fn finite(value: f64) -> Result<f64, String> {
+    if value.is_finite() {
+        Ok(value)
+    } else if value.is_nan() {
+        Err("the operation produced an undefined number".to_string())
+    } else {
+        Err("the result is too large to represent".to_string())
+    }
+}
+
+fn describe_token(token: &Token) -> String {
+    match token {
+        Token::Number(value) => value.to_string(),
+        Token::Identifier(name) => name.clone(),
+        Token::Plus => "+".to_string(),
+        Token::Minus => "-".to_string(),
+        Token::Multiply => "*".to_string(),
+        Token::Divide => "/".to_string(),
+        Token::Modulo => "%".to_string(),
+        Token::FloorDivide => "//".to_string(),
+        Token::Power => "^".to_string(),
+        Token::Factorial => "!".to_string(),
+        Token::LeftParen => "(".to_string(),
+        Token::RightParen => ")".to_string(),
+        Token::Comma => ",".to_string(),
+    }
+}
+
+fn read_line(prompt: &str) -> Input<String> {
+    print!("{}: ", prompt);
+
+    if io::stdout().flush().is_err() {
+        return Input::EndOfInput;
+    }
+
+    let mut input = String::new();
+
+    match io::stdin().read_line(&mut input) {
+        Ok(0) | Err(_) => Input::EndOfInput,
+        Ok(_) => {
+            let value = input.trim();
+
+            if let Some(command) = parse_command(value) {
+                Input::Command(command)
+            } else {
+                Input::Value(value.to_owned())
+            }
+        }
+    }
+}
+
+fn parse_command(input: &str) -> Option<Command> {
+    match input.to_ascii_lowercase().as_str() {
+        "q" | "quit" | "exit" => Some(Command::Quit),
+        "h" | "help" | "?" => Some(Command::Help),
+        "history" => Some(Command::History),
+        "clear" | "cls" => Some(Command::Clear),
+        _ => None,
+    }
+}
+
+fn handle_command(command: Command, history: &[String]) -> bool {
+    match command {
+        Command::Quit => false,
+        Command::Help => {
+            print_help();
+            true
+        }
+        Command::History => {
+            print_history(history);
+            true
+        }
+        Command::Clear => {
+            clear_screen();
+            print_banner();
+            true
+        }
+    }
+}
+
+fn print_banner() {
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("                 Advanced Calculator");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Examples: 2 + 3 * 4   sqrt(81)   5!   sin(pi / 2)");
+    println!("Type 'help' for operators or 'q' to quit.\n");
+}
+
+fn print_help() {
+    println!(
+        "\nOperators:\n\
+         +  addition       -  subtraction\n\
+         *  multiplication /  division\n\
+         %  remainder      // floor division\n\
+         ^ or ** power      !  factorial\n\
+         ( ) parentheses\n\n\
+         Functions:\n\
+         sqrt, cbrt, abs, sin, cos, tan, asin, acos, atan\n\
+         sinh, cosh, tanh, ln, log, log2, exp, floor, ceil\n\
+         round, sign, percent, min(a,b), max(a,b), hypot(a,b), atan2(a,b)\n\n\
+         Constants:\n\
+         pi, tau, e, ans (the previous successful answer)\n\n\
+         Commands: help, history, clear, quit\n"
+    );
+}
+
+fn print_history(history: &[String]) {
+    if history.is_empty() {
+        println!("\nNo calculations yet.\n");
+        return;
+    }
+
+    println!("\nCalculation history:");
+
+    for (index, calculation) in history.iter().enumerate() {
+        println!("{}. {}", index + 1, calculation);
+    }
+
+    println!();
+}
+
+fn clear_screen() {
+    print!("\x1B[2J\x1B[1;1H");
+    let _ = io::stdout().flush();
 }
