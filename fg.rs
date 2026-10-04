@@ -1,35 +1,71 @@
 use eframe::egui;
+use std::cell::OnceCell;
+use std::fmt::Write;
 use std::time::{Duration, Instant};
 
 const MAX_N: u32 = 10_000;
 const BASE: u64 = 1_000_000_000;
+const BATCH_LIMIT: u64 = 10_000_000_000;
 const HISTORY_LEN: usize = 8;
 
-fn factorial(n: u32) -> Vec<u32> {
-    let mut limbs = vec![1u32];
-    for k in 2..=n as u64 {
-        let mut carry = 0u64;
-        for limb in limbs.iter_mut() {
-            let v = *limb as u64 * k + carry;
-            *limb = (v % BASE) as u32;
-            carry = v / BASE;
-        }
-        while carry > 0 {
-            limbs.push((carry % BASE) as u32);
-            carry /= BASE;
-        }
+fn mul_small(limbs: &mut Vec<u32>, m: u64) {
+    let mut carry = 0u64;
+    for limb in limbs.iter_mut() {
+        let v = *limb as u64 * m + carry;
+        *limb = (v % BASE) as u32;
+        carry = v / BASE;
     }
-    limbs
+    while carry > 0 {
+        limbs.push((carry % BASE) as u32);
+        carry /= BASE;
+    }
+}
+
+fn extend_factorial(limbs: &mut Vec<u32>, from: u32, to: u32) {
+    let end = to as u64;
+    let mut k = from as u64 + 1;
+    while k <= end {
+        let mut m = 1u64;
+        while k <= end && m * k <= BATCH_LIMIT {
+            m *= k;
+            k += 1;
+        }
+        mul_small(limbs, m);
+    }
+}
+
+struct Cache {
+    n: u32,
+    limbs: Vec<u32>,
+}
+
+impl Default for Cache {
+    fn default() -> Self {
+        let mut limbs = Vec::with_capacity(4096);
+        limbs.push(1);
+        Self { n: 0, limbs }
+    }
+}
+
+impl Cache {
+    fn advance_to(&mut self, n: u32) {
+        if n < self.n {
+            self.n = 0;
+            self.limbs.clear();
+            self.limbs.push(1);
+        }
+        extend_factorial(&mut self.limbs, self.n, n);
+        self.n = n;
+    }
 }
 
 fn to_digits(limbs: &[u32]) -> String {
     let mut s = String::with_capacity(limbs.len() * 9);
-    let mut iter = limbs.iter().rev();
-    if let Some(first) = iter.next() {
-        s.push_str(&first.to_string());
-    }
-    for limb in iter {
-        s.push_str(&format!("{limb:09}"));
+    if let Some((last, rest)) = limbs.split_last() {
+        write!(s, "{last}").unwrap();
+        for limb in rest.iter().rev() {
+            write!(s, "{limb:09}").unwrap();
+        }
     }
     s
 }
@@ -37,11 +73,11 @@ fn to_digits(limbs: &[u32]) -> String {
 fn group_digits(digits: &str) -> String {
     let len = digits.len();
     let mut out = String::with_capacity(len + len / 3);
-    for (i, c) in digits.chars().enumerate() {
+    for (i, &b) in digits.as_bytes().iter().enumerate() {
         if i > 0 && (len - i) % 3 == 0 {
             out.push(',');
         }
-        out.push(c);
+        out.push(b as char);
     }
     out
 }
@@ -60,15 +96,14 @@ fn scientific(digits: &str) -> String {
     if digits.len() <= 1 {
         return digits.to_string();
     }
-    let frac: String = digits.chars().skip(1).take(5).collect();
-    format!("{}.{}e+{}", &digits[..1], frac, digits.len() - 1)
+    format!("{}.{}e+{}", &digits[..1], &digits[1..digits.len().min(6)], digits.len() - 1)
 }
 
 struct Output {
     n: u32,
     digits: String,
-    grouped: String,
-    elapsed: Duration,
+    grouped: OnceCell<String>,
+    summary: String,
 }
 
 #[derive(Default)]
@@ -78,6 +113,7 @@ struct App {
     error: Option<String>,
     history: Vec<u32>,
     group: bool,
+    cache: Cache,
 }
 
 impl App {
@@ -89,25 +125,33 @@ impl App {
             .collect();
 
         if raw.is_empty() {
-            self.fail("Enter a number first.");
-            return;
+            return self.fail("Enter a number first.");
         }
-
+        if !raw.bytes().all(|b| b.is_ascii_digit()) {
+            return self.fail("Enter a whole number of 0 or greater.");
+        }
         match raw.parse::<u32>() {
             Ok(n) if n <= MAX_N => self.compute(n),
-            Ok(_) => self.fail(format!("Please enter a value no larger than {MAX_N}.")),
-            Err(_) => self.fail("Enter a whole number of 0 or greater."),
+            _ => self.fail(format!("Please enter a value no larger than {MAX_N}.")),
         }
     }
 
     fn compute(&mut self, n: u32) {
         let start = Instant::now();
-        let digits = to_digits(&factorial(n));
-        let elapsed = start.elapsed();
-        let grouped = group_digits(&digits);
+        self.cache.advance_to(n);
+        let digits = to_digits(&self.cache.limbs);
+        let elapsed: Duration = start.elapsed();
+
+        let summary = format!(
+            "{} digits  |  {} trailing zeros  |  ≈ {}  |  {:.2?}",
+            group_digits(&digits.len().to_string()),
+            trailing_zeros(n),
+            scientific(&digits),
+            elapsed,
+        );
 
         self.input = n.to_string();
-        self.output = Some(Output { n, digits, grouped, elapsed });
+        self.output = Some(Output { n, digits, grouped: OnceCell::new(), summary });
         self.error = None;
         self.history.retain(|&h| h != n);
         self.history.insert(0, n);
@@ -172,24 +216,21 @@ impl eframe::App for App {
             }
 
             if let Some(out) = &self.output {
-                let digit_count = out.digits.len();
                 ui.label(egui::RichText::new(format!("{}!", out.n)).strong().size(20.0));
-                ui.label(format!(
-                    "{} digits  |  {} trailing zeros  |  ≈ {}  |  {:.2?}",
-                    group_digits(&digit_count.to_string()),
-                    trailing_zeros(out.n),
-                    scientific(&out.digits),
-                    out.elapsed,
-                ));
+                ui.label(&out.summary);
 
                 ui.horizontal(|ui| {
-                    if ui.button("Copy").clicked() {
+                    if ui.button("Copy digits").clicked() {
                         ui.ctx().copy_text(out.digits.clone());
                     }
                     ui.checkbox(&mut self.group, "Group digits");
                 });
 
-                let mut shown: &str = if self.group { &out.grouped } else { &out.digits };
+                let mut shown: &str = if self.group {
+                    out.grouped.get_or_init(|| group_digits(&out.digits))
+                } else {
+                    &out.digits
+                };
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     ui.add(
                         egui::TextEdit::multiline(&mut shown)
