@@ -1,10 +1,11 @@
-struct DSU {
+#[derive(Clone)]
+struct Dsu {
     parent: Vec<usize>,
     rank: Vec<u8>,
     components: usize,
 }
 
-impl DSU {
+impl Dsu {
     fn new(n: usize) -> Self {
         Self {
             parent: (0..n).collect(),
@@ -22,9 +23,8 @@ impl DSU {
         x
     }
 
-    fn unite(&mut self, mut a: usize, mut b: usize) -> bool {
-        a = self.find(a);
-        b = self.find(b);
+    fn unite(&mut self, a: usize, b: usize) -> bool {
+        let (mut a, mut b) = (self.find(a), self.find(b));
         if a == b {
             return false;
         }
@@ -41,29 +41,21 @@ impl DSU {
 }
 
 impl Solution {
-    fn can_achieve(n: usize, edges: &[(usize, usize, i32, i32)], k: i32, x: i32) -> bool {
-        let mut dsu = DSU::new(n);
-        let mut upgrades = 0;
+    fn feasible(base: &Dsu, optional: &[(usize, usize, i32)], k: i32, x: i32) -> bool {
+        let mut dsu = base.clone();
 
-        for &(u, v, s, must) in edges {
-            if must == 1 {
-                if s < x || !dsu.unite(u, v) {
-                    return false;
-                }
+        for &(u, v, s) in optional {
+            if s >= x {
+                dsu.unite(u, v);
             }
         }
 
-        for &(u, v, s, must) in edges {
-            if must == 0 {
-                if s >= x {
-                    dsu.unite(u, v);
-                } else if 2 * s >= x {
-                    if dsu.unite(u, v) {
-                        upgrades += 1;
-                        if upgrades > k {
-                            return false;
-                        }
-                    }
+        let mut upgrades = 0;
+        for &(u, v, s) in optional {
+            if s < x && s * 2 >= x && dsu.unite(u, v) {
+                upgrades += 1;
+                if upgrades > k {
+                    return false;
                 }
             }
         }
@@ -73,42 +65,34 @@ impl Solution {
 
     pub fn max_stability(n: i32, edges: Vec<Vec<i32>>, k: i32) -> i32 {
         let n = n as usize;
+        let mut base = Dsu::new(n);
+        let mut optional = Vec::with_capacity(edges.len());
+        let mut min_must = i32::MAX;
+        let mut max_strength = 0;
 
-        let edges: Vec<(usize, usize, i32, i32)> = edges
-            .into_iter()
-            .map(|e| (e[0] as usize, e[1] as usize, e[2], e[3]))
-            .collect();
-
-        let mut dsu = DSU::new(n);
-        for &(u, v, _, must) in &edges {
-            if must == 1 && !dsu.unite(u, v) {
-                return -1;
+        for e in &edges {
+            let (u, v, s) = (e[0] as usize, e[1] as usize, e[2]);
+            max_strength = max_strength.max(s);
+            if e[3] == 1 {
+                if !base.unite(u, v) {
+                    return -1;
+                }
+                min_must = min_must.min(s);
+            } else {
+                optional.push((u, v, s));
             }
         }
 
-        let mut candidates = Vec::with_capacity(edges.len() * 2);
-        for &(_, _, s, _) in &edges {
-            candidates.push(s);
-            candidates.push(s << 1);
-        }
-        candidates.sort_unstable();
-        candidates.dedup();
-
-        if !Self::can_achieve(n, &edges, k, candidates[0]) {
-            return -1;
-        }
-
-        let mut lo = 0;
-        let mut hi = candidates.len() - 1;
-        let mut ans = candidates[0];
+        let mut lo = 1;
+        let mut hi = min_must.min(max_strength * 2);
+        let mut ans = -1;
 
         while lo <= hi {
-            let mid = (lo + hi) >> 1;
-            if Self::can_achieve(n, &edges, k, candidates[mid]) {
-                ans = candidates[mid];
+            let mid = lo + (hi - lo) / 2;
+            if Self::feasible(&base, &optional, k, mid) {
+                ans = mid;
                 lo = mid + 1;
             } else {
-                if mid == 0 { break; }
                 hi = mid - 1;
             }
         }
