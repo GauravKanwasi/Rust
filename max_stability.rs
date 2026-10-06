@@ -1,7 +1,7 @@
 #[derive(Clone)]
 struct Dsu {
     parent: Vec<usize>,
-    rank: Vec<u8>,
+    size: Vec<u32>,
     components: usize,
 }
 
@@ -9,16 +9,15 @@ impl Dsu {
     fn new(n: usize) -> Self {
         Self {
             parent: (0..n).collect(),
-            rank: vec![0; n],
+            size: vec![1; n],
             components: n,
         }
     }
 
     fn find(&mut self, mut x: usize) -> usize {
         while self.parent[x] != x {
-            let p = self.parent[x];
-            self.parent[x] = self.parent[p];
-            x = p;
+            self.parent[x] = self.parent[self.parent[x]];
+            x = self.parent[x];
         }
         x
     }
@@ -28,45 +27,51 @@ impl Dsu {
         if a == b {
             return false;
         }
-        if self.rank[a] < self.rank[b] {
+        if self.size[a] < self.size[b] {
             std::mem::swap(&mut a, &mut b);
         }
         self.parent[b] = a;
-        if self.rank[a] == self.rank[b] {
-            self.rank[a] += 1;
-        }
+        self.size[a] += self.size[b];
         self.components -= 1;
         true
     }
 }
 
 impl Solution {
-    fn feasible(base: &Dsu, optional: &[(usize, usize, i32)], k: i32, x: i32) -> bool {
-        let mut dsu = base.clone();
+    fn feasible(
+        base: &Dsu,
+        scratch: &mut Dsu,
+        optional: &[(usize, usize, i32)],
+        k: i32,
+        x: i32,
+    ) -> bool {
+        scratch.clone_from(base);
 
-        for &(u, v, s) in optional {
-            if s >= x {
-                dsu.unite(u, v);
-            }
+        let free = optional.partition_point(|e| e.2 >= x);
+        for &(u, v, _) in &optional[..free] {
+            scratch.unite(u, v);
         }
 
-        let mut upgrades = 0;
-        for &(u, v, s) in optional {
-            if s < x && s * 2 >= x && dsu.unite(u, v) {
-                upgrades += 1;
-                if upgrades > k {
+        let mut left = k;
+        for &(u, v, s) in &optional[free..] {
+            if s * 2 < x {
+                break;
+            }
+            if scratch.unite(u, v) {
+                left -= 1;
+                if left < 0 {
                     return false;
                 }
             }
         }
 
-        dsu.components == 1
+        scratch.components == 1
     }
 
     pub fn max_stability(n: i32, edges: Vec<Vec<i32>>, k: i32) -> i32 {
         let n = n as usize;
         let mut base = Dsu::new(n);
-        let mut optional = Vec::with_capacity(edges.len());
+        let mut optional: Vec<(usize, usize, i32)> = Vec::with_capacity(edges.len());
         let mut min_must = i32::MAX;
         let mut max_strength = 0;
 
@@ -83,13 +88,19 @@ impl Solution {
             }
         }
 
-        let mut lo = 1;
-        let mut hi = min_must.min(max_strength * 2);
+        if base.components - 1 > optional.len() {
+            return -1;
+        }
+
+        optional.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+
+        let mut scratch = base.clone();
+        let (mut lo, mut hi) = (1, min_must.min(max_strength * 2));
         let mut ans = -1;
 
         while lo <= hi {
             let mid = lo + (hi - lo) / 2;
-            if Self::feasible(&base, &optional, k, mid) {
+            if Self::feasible(&base, &mut scratch, &optional, k, mid) {
                 ans = mid;
                 lo = mid + 1;
             } else {
