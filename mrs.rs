@@ -7,19 +7,19 @@ class Solution:
 
         t = [ord(ch) - 97 for ch in target]
 
-        i = 0
-        while i < n and cnt[t[i]] > 0:
-            cnt[t[i]] -= 1
-            i += 1
+        prefix = 0
+        while prefix < n and cnt[t[prefix]]:
+            cnt[t[prefix]] -= 1
+            prefix += 1
 
-        while True:
+        for i in range(prefix, -1, -1):
             if i < n:
                 for c in range(t[i] + 1, 26):
                     if cnt[c]:
                         cnt[c] -= 1
-                        suffix = ''.join(chr(97 + d) * cnt[d] for d in range(26) if cnt[d])
-                        return target[:i] + chr(97 + c) + suffix
-            if i == 0:
-                return ""
-            i -= 1
-            cnt[t[i]] += 1
+                        rest = ''.join(chr(97 + d) * cnt[d] for d in range(26))
+                        return target[:i] + chr(97 + c) + rest
+            if i:
+                cnt[t[i - 1]] += 1
+
+        return ""
