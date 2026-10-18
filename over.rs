@@ -1,9 +1,9 @@
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::ops::{Add, Mul, Sub};
 
-trait AdvancedCalculator:
-    Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Sized
-{
+const LABEL_WIDTH: usize = 24;
+
+trait Calculator: Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Sized {
     fn combine(self, other: Self) -> Self {
         self + other
     }
@@ -17,17 +17,32 @@ trait AdvancedCalculator:
     }
 }
 
-impl AdvancedCalculator for i32 {}
-impl AdvancedCalculator for f64 {}
+impl<T> Calculator for T where
+    T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Sized
+{
+}
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Wrapper(String);
+
+impl From<&str> for Wrapper {
+    fn from(s: &str) -> Self {
+        Wrapper(s.to_owned())
+    }
+}
+
+impl From<String> for Wrapper {
+    fn from(s: String) -> Self {
+        Wrapper(s)
+    }
+}
 
 impl Add for Wrapper {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self {
-        Wrapper(format!("{}{}", self.0, rhs.0))
+    fn add(mut self, rhs: Self) -> Self {
+        self.0.push_str(&rhs.0);
+        self
     }
 }
 
@@ -35,7 +50,11 @@ impl Sub for Wrapper {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self {
-        Wrapper(self.0.replace(&rhs.0, ""))
+        if rhs.0.is_empty() {
+            self
+        } else {
+            Wrapper(self.0.replace(&rhs.0, ""))
+        }
     }
 }
 
@@ -43,7 +62,7 @@ impl Mul for Wrapper {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self {
-        Wrapper(format!("{}{}", self.0, rhs.0))
+        self + rhs
     }
 }
 
@@ -55,49 +74,76 @@ impl Mul<usize> for Wrapper {
     }
 }
 
-impl AdvancedCalculator for Wrapper {}
-
 impl Display for Wrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(&self.0)
     }
 }
 
-fn execute_addition<T: AdvancedCalculator>(a: T, b: T) -> T {
+fn add<T: Calculator>(a: T, b: T) -> T {
     a.combine(b)
 }
 
-fn execute_subtraction<T: AdvancedCalculator>(a: T, b: T) -> T {
+fn sub<T: Calculator>(a: T, b: T) -> T {
     a.subtract(b)
 }
 
-fn execute_multiplication<T: AdvancedCalculator>(a: T, b: T) -> T {
+fn mul<T: Calculator>(a: T, b: T) -> T {
     a.multiply(b)
 }
 
-fn display_result<T: Display>(label: &str, value: T) {
-    println!("{:<18} {}", label, value);
+fn show(label: &str, value: impl Display) {
+    println!("{label:<LABEL_WIDTH$} {value}");
 }
 
 fn main() {
     println!("=== Advanced Generic Calculator ===\n");
 
-    display_result("Integer addition:", execute_addition(50, 100));
-    display_result("Integer subtraction:", execute_subtraction(100, 50));
-    display_result("Integer multiplication:", execute_multiplication(10, 5));
+    show("Integer addition:", add(50, 100));
+    show("Integer subtraction:", sub(100, 50));
+    show("Integer multiplication:", mul(10, 5));
 
     println!();
 
-    display_result("Float addition:", execute_addition(10.5, 20.5));
-    display_result("Float subtraction:", execute_subtraction(30.5, 10.5));
-    display_result("Float multiplication:", execute_multiplication(4.5, 2.0));
+    show("Float addition:", add(10.5, 20.5));
+    show("Float subtraction:", sub(30.5, 10.5));
+    show("Float multiplication:", mul(4.5, 2.0));
 
     println!();
 
-    let s1 = Wrapper("Generic ".to_string());
-    let s2 = Wrapper("Programming".to_string());
+    let s1 = Wrapper::from("Generic ");
+    let s2 = Wrapper::from("Programming");
 
-    display_result("String concatenation:", execute_addition(s1.clone(), s2.clone()));
-    display_result("String subtraction:", execute_subtraction(s1, s2));
-    display_result("String repetition:", Wrapper("Rust ".to_string()) * 3);
+    show("String concatenation:", add(s1.clone(), s2.clone()));
+    show("String subtraction:", sub(s1, s2));
+    show("String repetition:", Wrapper::from("Rust ") * 3);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integers() {
+        assert_eq!(add(50, 100), 150);
+        assert_eq!(sub(100, 50), 50);
+        assert_eq!(mul(10, 5), 50);
+    }
+
+    #[test]
+    fn floats() {
+        assert_eq!(add(10.5, 20.5), 31.0);
+        assert_eq!(sub(30.5, 10.5), 20.0);
+        assert_eq!(mul(4.5, 2.0), 9.0);
+    }
+
+    #[test]
+    fn wrapper_ops() {
+        let a = Wrapper::from("Generic ");
+        let b = Wrapper::from("Programming");
+        assert_eq!(add(a.clone(), b.clone()), Wrapper::from("Generic Programming"));
+        assert_eq!(sub(a.clone(), b), a);
+        assert_eq!(Wrapper::from("ab") * 3, Wrapper::from("ababab"));
+        assert_eq!(sub(Wrapper::from("abcabc"), Wrapper::from("")), Wrapper::from("abcabc"));
+    }
 }
