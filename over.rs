@@ -7,7 +7,6 @@ trait Calculator: Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> +
     fn combine(self, other: Self) -> Self {
         self + other
     }
-
     fn subtract(self, other: Self) -> Self {
         self - other
     }
@@ -21,7 +20,6 @@ impl<T> Calculator for T where
     T: Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Sized
 {
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Wrapper(String);
 
@@ -30,7 +28,6 @@ impl From<&str> for Wrapper {
         Wrapper(s.to_owned())
     }
 }
-
 impl From<String> for Wrapper {
     fn from(s: String) -> Self {
         Wrapper(s)
@@ -129,14 +126,12 @@ mod tests {
         assert_eq!(sub(100, 50), 50);
         assert_eq!(mul(10, 5), 50);
     }
-
     #[test]
     fn floats() {
         assert_eq!(add(10.5, 20.5), 31.0);
         assert_eq!(sub(30.5, 10.5), 20.0);
         assert_eq!(mul(4.5, 2.0), 9.0);
     }
-
     #[test]
     fn wrapper_ops() {
         let a = Wrapper::from("Generic ");
