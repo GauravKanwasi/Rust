@@ -1,9 +1,16 @@
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufWriter, Write};
 
-fn main() {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input).unwrap();
+fn main() -> io::Result<()> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = stdin.lock();
+    let mut writer = BufWriter::new(stdout.lock());
+    let mut buffer = String::new();
 
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(input.to_uppercase().as_bytes()).unwrap();
+    while reader.read_line(&mut buffer)? > 0 {
+        writer.write_all(buffer.to_uppercase().as_bytes())?;
+        buffer.clear();
+    }
+
+    writer.flush()
 }
