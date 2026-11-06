@@ -1,11 +1,21 @@
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 #[derive(Debug, Clone)]
 struct User {
     id: u32,
     name: String,
+    name_lower: String,
     email: String,
     active: bool,
+}
+
+impl User {
+    fn new(id: u32, name: impl Into<String>, email: impl Into<String>, active: bool) -> Self {
+        let name = name.into();
+        let name_lower = name.to_lowercase();
+        User { id, name, name_lower, email: email.into(), active }
+    }
 }
 
 #[derive(Debug)]
@@ -26,30 +36,32 @@ impl fmt::Display for DbError {
 }
 
 struct Database {
-    users: Vec<User>,
+    users: BTreeMap<u32, User>,
+    emails: HashMap<String, u32>,
 }
 
 impl Database {
     fn new() -> Self {
-        Database { users: Vec::new() }
+        Database {
+            users: BTreeMap::new(),
+            emails: HashMap::new(),
+        }
     }
 
     fn add_user(&mut self, user: User) -> Result<(), DbError> {
-        if self.users.iter().any(|u| u.id == user.id) {
+        if self.users.contains_key(&user.id) {
             return Err(DbError::DuplicateId(user.id));
         }
-        if self.users.iter().any(|u| u.email == user.email) {
-            return Err(DbError::DuplicateEmail(user.email.clone()));
+        if self.emails.contains_key(&user.email) {
+            return Err(DbError::DuplicateEmail(user.email));
         }
-        self.users.push(user);
+        self.emails.insert(user.email.clone(), user.id);
+        self.users.insert(user.id, user);
         Ok(())
     }
 
     fn get_user(&self, id: u32) -> Result<&User, DbError> {
-        self.users
-            .iter()
-            .find(|u| u.id == id)
-            .ok_or(DbError::UserNotFound(id))
+        self.users.get(&id).ok_or(DbError::UserNotFound(id))
     }
 
     fn update_user(
@@ -59,37 +71,41 @@ impl Database {
         email: Option<String>,
         active: Option<bool>,
     ) -> Result<(), DbError> {
-        let user = self
-            .users
-            .iter_mut()
-            .find(|u| u.id == id)
-            .ok_or(DbError::UserNotFound(id))?;
+        let user = self.users.get_mut(&id).ok_or(DbError::UserNotFound(id))?;
 
-        if let Some(n) = name   { user.name = n; }
-        if let Some(e) = email  { user.email = e; }
-        if let Some(a) = active { user.active = a; }
+        if let Some(e) = email {
+            if e != user.email {
+                if self.emails.contains_key(&e) {
+                    return Err(DbError::DuplicateEmail(e));
+                }
+                self.emails.remove(&user.email);
+                self.emails.insert(e.clone(), id);
+                user.email = e;
+            }
+        }
+        if let Some(n) = name {
+            user.name_lower = n.to_lowercase();
+            user.name = n;
+        }
+        if let Some(a) = active {
+            user.active = a;
+        }
         Ok(())
     }
 
     fn delete_user(&mut self, id: u32) -> Result<User, DbError> {
-        let pos = self
-            .users
-            .iter()
-            .position(|u| u.id == id)
-            .ok_or(DbError::UserNotFound(id))?;
-        Ok(self.users.remove(pos))
+        let user = self.users.remove(&id).ok_or(DbError::UserNotFound(id))?;
+        self.emails.remove(&user.email);
+        Ok(user)
     }
 
-    fn search_by_name(&self, query: &str) -> Vec<&User> {
+    fn search_by_name<'a>(&'a self, query: &str) -> impl Iterator<Item = &'a User> + 'a {
         let q = query.to_lowercase();
-        self.users
-            .iter()
-            .filter(|u| u.name.to_lowercase().contains(&q))
-            .collect()
+        self.users.values().filter(move |u| u.name_lower.contains(&q))
     }
 
-    fn list_active(&self) -> Vec<&User> {
-        self.users.iter().filter(|u| u.active).collect()
+    fn list_active(&self) -> impl Iterator<Item = &User> {
+        self.users.values().filter(|u| u.active)
     }
 
     fn list_users(&self) {
@@ -100,7 +116,7 @@ impl Database {
         println!("{:-<55}", "");
         println!("{:<6} {:<12} {:<25} {}", "ID", "Name", "Email", "Active");
         println!("{:-<55}", "");
-        for u in &self.users {
+        for u in self.users.values() {
             println!("{:<6} {:<12} {:<25} {}", u.id, u.name, u.email, u.active);
         }
         println!("{:-<55}", "");
@@ -108,30 +124,30 @@ impl Database {
     }
 }
 
-fn print_user_list(label: &str, users: &[&User]) {
+fn print_user_list<'a>(label: &str, users: impl Iterator<Item = &'a User>) {
     println!("\n{}", label);
-    if users.is_empty() {
+    let mut any = false;
+    for u in users {
+        any = true;
+        println!("  [{:?}]", u);
+    }
+    if !any {
         println!("  (none)");
-    } else {
-        for u in users {
-            println!("  [{:?}]", u);
-        }
     }
 }
 
 fn main() {
     let mut db = Database::new();
 
-    let seed = vec![
-        User { id: 1, name: "Alice".into(),   email: "alice@example.com".into(),   active: true  },
-        User { id: 2, name: "Bob".into(),     email: "bob@example.com".into(),     active: false },
-        User { id: 3, name: "Charlie".into(), email: "charlie@example.com".into(), active: true  },
+    let seed = [
+        User::new(1, "Alice", "alice@example.com", true),
+        User::new(2, "Bob", "bob@example.com", false),
+        User::new(3, "Charlie", "charlie@example.com", true),
     ];
 
     for user in seed {
-        match db.add_user(user) {
-            Ok(_)    => {}
-            Err(e)   => eprintln!("Add error: {}", e),
+        if let Err(e) = db.add_user(user) {
+            eprintln!("Add error: {}", e);
         }
     }
 
@@ -140,31 +156,30 @@ fn main() {
 
     println!("\n=== Lookup ID 2 ===");
     match db.get_user(2) {
-        Ok(u)  => println!("Found: {:?}", u),
+        Ok(u) => println!("Found: {:?}", u),
         Err(e) => eprintln!("Error: {}", e),
     }
 
     println!("\n=== Update Bob (ID 2) ===");
     match db.update_user(2, None, Some("bob.new@example.com".into()), Some(true)) {
-        Ok(_)  => println!("Updated successfully."),
+        Ok(_) => println!("Updated successfully."),
         Err(e) => eprintln!("Error: {}", e),
     }
 
     println!("\n=== Duplicate ID Test ===");
-    match db.add_user(User { id: 1, name: "Dup".into(), email: "dup@example.com".into(), active: true }) {
-        Ok(_)  => {}
-        Err(e) => eprintln!("Expected error: {}", e),
+    if let Err(e) = db.add_user(User::new(1, "Dup", "dup@example.com", true)) {
+        eprintln!("Expected error: {}", e);
     }
 
     println!("\n=== Search 'al' ===");
-    print_user_list("Results:", &db.search_by_name("al"));
+    print_user_list("Results:", db.search_by_name("al"));
 
     println!("\n=== Active Users ===");
-    print_user_list("Active:", &db.list_active());
+    print_user_list("Active:", db.list_active());
 
     println!("\n=== Delete ID 3 ===");
     match db.delete_user(3) {
-        Ok(u)  => println!("Deleted: {:?}", u),
+        Ok(u) => println!("Deleted: {:?}", u),
         Err(e) => eprintln!("Error: {}", e),
     }
 
@@ -173,7 +188,7 @@ fn main() {
 
     println!("\n=== Lookup Deleted ID 3 ===");
     match db.get_user(3) {
-        Ok(u)  => println!("Found: {:?}", u),
+        Ok(u) => println!("Found: {:?}", u),
         Err(e) => eprintln!("Expected error: {}", e),
     }
 }
