@@ -1,86 +1,150 @@
-use std::io;
-use std::io::Write;
+use std::env;
+use std::io::{self, Write};
 
-fn insertion_sort(arr: &mut Vec<i32>) {
-    let n = arr.len();
-    let width = 60;
-    
-    println!("{}", "═".repeat(width));
-    println!("{:^width$}", "INSERTION SORT VISUALIZER");
-    println!("{}", "═".repeat(width));
-    println!("{:^width$}", format!("Initial: {:?}", arr));
-    println!("{}", "─".repeat(width));
+const WIDTH: usize = 60;
 
-    for i in 1..n {
-        let key = arr[i];
-        let mut j = i as isize - 1;
-        let comparisons_start = j;
+struct Stats {
+    comparisons: usize,
+    shifts: usize,
+    passes: usize,
+}
 
-        while j >= 0 && arr[j as usize] > key {
-            arr[(j + 1) as usize] = arr[j as usize];
-            j -= 1;
-        }
-        arr[(j + 1) as usize] = key;
+struct Palette {
+    green: &'static str,
+    yellow: &'static str,
+    grey: &'static str,
+    reset: &'static str,
+}
 
-        println!("Pass {:>2} │ Key: {:>4} │ Sorted: {:?}", i, key, &arr[..=i]);
-        
-        let shifts = (comparisons_start - j) as usize;
-        if shifts > 0 {
-            println!("       │ Shifted {} element{} right", shifts, if shifts == 1 { "" } else { "s" });
+impl Palette {
+    fn new() -> Self {
+        if env::var_os("NO_COLOR").is_some() {
+            Palette { green: "", yellow: "", grey: "", reset: "" }
         } else {
-            println!("       │ Key already in position");
-        }
-
-        print!("       │ ");
-        for (idx, &val) in arr.iter().enumerate() {
-            if idx < i {
-                print!("\x1b[32m{:>3}\x1b[0m", val);
-            } else if idx == i {
-                print!("\x1b[33m{:>3}\x1b[0m", val);
-            } else {
-                print!("\x1b[90m{:>3}\x1b[0m", val);
+            Palette {
+                green: "\x1b[32m",
+                yellow: "\x1b[1;33m",
+                grey: "\x1b[90m",
+                reset: "\x1b[0m",
             }
         }
-        println!();
-        println!("{}", "─".repeat(width));
+    }
+}
+
+fn render(arr: &[i32], sorted_end: usize, key_pos: usize, p: &Palette) -> String {
+    let cell_width = arr.iter().map(|v| v.to_string().len()).max().unwrap_or(1) + 1;
+    let mut out = String::new();
+    for (idx, v) in arr.iter().enumerate() {
+        let color = if idx == key_pos {
+            p.yellow
+        } else if idx <= sorted_end {
+            p.green
+        } else {
+            p.grey
+        };
+        out.push_str(&format!("{}{:>w$}{}", color, v, p.reset, w = cell_width));
+    }
+    out
+}
+
+fn insertion_sort(arr: &mut [i32]) -> Stats {
+    let p = Palette::new();
+    let mut stats = Stats { comparisons: 0, shifts: 0, passes: 0 };
+
+    println!("{}", "═".repeat(WIDTH));
+    println!("{:^w$}", "INSERTION SORT VISUALIZER", w = WIDTH);
+    println!("{}", "═".repeat(WIDTH));
+    println!("Initial: {:?}", arr);
+    println!("{}", "─".repeat(WIDTH));
+
+    for i in 1..arr.len() {
+        let key = arr[i];
+        let mut j = i;
+        let mut pass_shifts = 0;
+        let mut pass_comparisons = 0;
+
+        while j > 0 {
+            pass_comparisons += 1;
+            if arr[j - 1] > key {
+                arr[j] = arr[j - 1];
+                j -= 1;
+                pass_shifts += 1;
+            } else {
+                break;
+            }
+        }
+        arr[j] = key;
+
+        stats.comparisons += pass_comparisons;
+        stats.shifts += pass_shifts;
+        stats.passes += 1;
+
+        println!("Pass {:>2} │ Key: {:>4} │ Sorted: {:?}", i, key, &arr[..=i]);
+        println!(
+            "       │ {} comparison{}, {} shift{}, inserted at index {}",
+            pass_comparisons,
+            if pass_comparisons == 1 { "" } else { "s" },
+            pass_shifts,
+            if pass_shifts == 1 { "" } else { "s" },
+            j
+        );
+        println!("       │ {}", render(arr, i, j, &p));
+        println!("{}", "─".repeat(WIDTH));
     }
 
-    println!("{:^width$}", "SORTED ✓");
-    println!("{}", "═".repeat(width));
+    println!("{:^w$}", "SORTED ✓", w = WIDTH);
+    println!("{}", "═".repeat(WIDTH));
+    stats
+}
+
+fn read_numbers() -> Option<Vec<i32>> {
+    loop {
+        print!("Enter numbers separated by spaces or commas (q to quit): ");
+        io::stdout().flush().ok()?;
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).ok()? == 0 {
+            return None;
+        }
+
+        let trimmed = input.trim();
+        if trimmed.eq_ignore_ascii_case("q") {
+            return None;
+        }
+        if trimmed.is_empty() {
+            eprintln!("Error: no input provided. Try again.\n");
+            continue;
+        }
+
+        let parsed: Result<Vec<i32>, _> = trimmed
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<i32>())
+            .collect();
+
+        match parsed {
+            Ok(nums) => return Some(nums),
+            Err(e) => eprintln!("Error: {}. Please enter valid integers only.\n", e),
+        }
+    }
 }
 
 fn main() {
-    print!("Enter numbers separated by spaces: ");
-    io::stdout().flush().expect("Failed to flush stdout");
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).expect("Failed to read input");
-
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        eprintln!("Error: No input provided.");
+    let Some(mut numbers) = read_numbers() else {
         return;
-    }
-
-    let parse_result: Result<Vec<i32>, _> = trimmed
-        .split_whitespace()
-        .map(|x| x.parse::<i32>())
-        .collect();
-
-    let mut numbers = match parse_result {
-        Ok(nums) => nums,
-        Err(_) => {
-            eprintln!("Error: Please enter valid integers only.");
-            return;
-        }
     };
 
     if numbers.len() < 2 {
-        println!("Array has fewer than 2 elements — nothing to sort.");
+        println!("Array has fewer than 2 elements, nothing to sort.");
         println!("Result: {:?}", numbers);
         return;
     }
 
-    insertion_sort(&mut numbers);
+    let stats = insertion_sort(&mut numbers);
+
     println!("\n  Final sorted array: {:?}", numbers);
+    println!(
+        "  Passes: {} | Comparisons: {} | Shifts: {}",
+        stats.passes, stats.comparisons, stats.shifts
+    );
 }
