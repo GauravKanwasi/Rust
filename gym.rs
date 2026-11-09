@@ -1,9 +1,15 @@
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fmt;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const DB_FILE: &str = "gym_members.csv";
+const TMP_FILE: &str = "gym_members.csv.tmp";
+const BAK_FILE: &str = "gym_members.csv.bak";
+const WIDTH: usize = 104;
+
+// ───────────────────────────── Data model ─────────────────────────────
 
 #[derive(Clone)]
 struct Member {
@@ -12,9 +18,10 @@ struct Member {
     plan: Plan,
     email: String,
     phone: String,
+    joined: String, // YYYY-MM-DD (UTC)
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Plan {
     Basic,
     Standard,
@@ -22,6 +29,8 @@ enum Plan {
 }
 
 impl Plan {
+    const ALL: [Plan; 3] = [Plan::Basic, Plan::Standard, Plan::Premium];
+
     fn from_choice(s: &str) -> Option<Self> {
         match s {
             "1" => Some(Self::Basic),
@@ -31,36 +40,49 @@ impl Plan {
         }
     }
 
-    fn from_str_exact(s: &str) -> Self {
-        match s {
-            "Standard" => Self::Standard,
-            "Premium" => Self::Premium,
-            _ => Self::Basic,
+    fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.to_string() == s)
+    }
+
+    /// Monthly fee in dollars.
+    fn fee(self) -> u32 {
+        match self {
+            Self::Basic => 20,
+            Self::Standard => 35,
+            Self::Premium => 55,
         }
     }
 }
 
-impl std::fmt::Display for Plan {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let s = match self {
+impl fmt::Display for Plan {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self {
             Self::Basic => "Basic",
             Self::Standard => "Standard",
             Self::Premium => "Premium",
-        };
-        write!(f, "{}", s)
+        })
     }
 }
 
+// ───────────────────────────── UI helpers ─────────────────────────────
+
+/// Reads one trimmed line. Exits cleanly on EOF (Ctrl-D / closed stdin)
+/// instead of looping forever or panicking. Data is saved after every change.
 fn prompt(msg: &str) -> String {
     print!("{}", msg);
-    io::stdout().flush().unwrap();
+    io::stdout().flush().ok();
     let mut s = String::new();
-    io::stdin().read_line(&mut s).unwrap();
-    s.trim().to_string()
+    match io::stdin().read_line(&mut s) {
+        Ok(0) | Err(_) => {
+            println!("\n\n  Goodbye!\n");
+            std::process::exit(0);
+        }
+        Ok(_) => s.trim().to_string(),
+    }
 }
 
 fn divider() {
-    println!("{}", "═".repeat(85));
+    println!("{}", "═".repeat(WIDTH));
 }
 
 fn header(title: &str) {
@@ -68,6 +90,13 @@ fn header(title: &str) {
     divider();
     println!("  {}", title);
     divider();
+}
+
+fn banner() {
+    let inner = WIDTH - 2;
+    println!("╔{}╗", "═".repeat(inner));
+    println!("║{:^w$}║", "GYM MEMBERSHIP MANAGEMENT SYSTEM", w = inner);
+    println!("╚{}╝", "═".repeat(inner));
 }
 
 fn ok(msg: &str) {
@@ -80,134 +109,288 @@ fn info(msg: &str) {
     println!("  ·  {}", msg);
 }
 
+/// Truncates to `n` characters, adding an ellipsis so columns stay aligned.
+fn clip(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let t: String = s.chars().take(n - 1).collect();
+        format!("{}…", t)
+    }
+}
+
+fn table_header() {
+    println!(
+        "  {:<5} │ {:<18} │ {:<3} │ {:<8} │ {:<24} │ {:<16} │ {}",
+        "ID", "Name", "Age", "Plan", "Email", "Phone", "Joined"
+    );
+    divider();
+}
+
+fn print_member(id: u32, m: &Member) {
+    println!(
+        "  #{:<4} │ {:<18} │ {:<3} │ {:<8} │ {:<24} │ {:<16} │ {}",
+        id,
+        clip(&m.name, 18),
+        m.age,
+        m.plan.to_string(),
+        clip(&m.email, 24),
+        clip(&m.phone, 16),
+        m.joined
+    );
+}
+
+/// Sorted table of the given hits.
+fn show_list(mut hits: Vec<(u32, &Member)>) {
+    hits.sort_by_key(|(id, _)| *id);
+    divider();
+    table_header();
+    for (id, m) in hits {
+        print_member(id, m);
+    }
+    divider();
+}
+
+// ───────────────────────────── Validation ─────────────────────────────
+
 fn valid_name(s: &str) -> bool {
-    !s.trim().is_empty() && s.chars().all(|c| c.is_alphabetic() || c == ' ')
+    s.chars().any(|c| c.is_alphabetic())
+        && s.chars()
+            .all(|c| c.is_alphabetic() || matches!(c, ' ' | '-' | '\'' | '.'))
 }
 
 fn valid_age(s: &str) -> Option<u32> {
-    s.trim().parse::<u32>().ok().filter(|&a| (1..=120).contains(&a))
+    s.parse::<u32>().ok().filter(|a| (1..=120).contains(a))
 }
 
 fn valid_email(s: &str) -> bool {
-    s.contains('@') && s.contains('.') && s.len() >= 5
+    if s.chars().any(|c| c.is_whitespace() || c == ',') {
+        return false;
+    }
+    match s.split_once('@') {
+        Some((local, domain)) => {
+            !local.is_empty()
+                && !domain.contains('@')
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.ends_with('.')
+        }
+        None => false,
+    }
 }
 
 fn valid_phone(s: &str) -> bool {
-    let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    (7..=15).contains(&d.len())
+    let digits = s.chars().filter(|c| c.is_ascii_digit()).count();
+    s.chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '(' | ')' | ' '))
+        && (7..=15).contains(&digits)
 }
 
-fn ask_name(label: &str) -> String {
+// ───────────────────────────── Input helpers ─────────────────────────────
+// Every `ask_*` returns None if the user presses Enter on an empty line,
+// which lets them cancel out of any flow.
+
+fn ask<T>(label: &str, hint: &str, parse: impl Fn(&str) -> Option<T>) -> Option<T> {
     loop {
-        let v = prompt(&format!("  {} Name : ", label));
-        if valid_name(&v) {
-            return v.trim().to_string();
+        let v = prompt(&format!("  {:<12}: ", label));
+        if v.is_empty() {
+            return None;
         }
-        err("Only letters and spaces allowed.");
+        if let Some(x) = parse(&v) {
+            return Some(x);
+        }
+        err(hint);
     }
 }
 
-fn ask_age(label: &str) -> u32 {
+fn ask_name(label: &str) -> Option<String> {
+    ask(label, "Letters, spaces, hyphens and apostrophes only.", |s| {
+        valid_name(s).then(|| s.to_string())
+    })
+}
+
+fn ask_age(label: &str) -> Option<u32> {
+    ask(label, "Enter a number between 1 and 120.", valid_age)
+}
+
+fn ask_phone(label: &str) -> Option<String> {
+    ask(label, "Phone must contain 7–15 digits.", |s| {
+        valid_phone(s).then(|| s.to_string())
+    })
+}
+
+fn ask_email(label: &str, members: &HashMap<u32, Member>, exclude: Option<u32>) -> Option<String> {
     loop {
-        let v = prompt(&format!("  {} Age  : ", label));
-        if let Some(a) = valid_age(&v) {
-            return a;
+        let v = ask(label, "Invalid email (e.g. name@example.com).", |s| {
+            valid_email(s).then(|| s.to_string())
+        })?;
+        let taken = members
+            .iter()
+            .any(|(id, m)| Some(*id) != exclude && m.email.eq_ignore_ascii_case(&v));
+        if !taken {
+            return Some(v);
         }
-        err("Enter a number between 1 and 120.");
+        err("That email is already registered.");
     }
 }
 
-fn ask_email(label: &str) -> String {
+fn ask_plan(label: &str) -> Option<Plan> {
     loop {
-        let v = prompt(&format!("  {} Email: ", label));
-        if valid_email(&v) {
-            return v;
-        }
-        err("Invalid email format.");
-    }
-}
-
-fn ask_phone(label: &str) -> String {
-    loop {
-        let v = prompt(&format!("  {} Phone: ", label));
-        if valid_phone(&v) {
-            return v;
-        }
-        err("Phone must have 7–15 digits.");
-    }
-}
-
-fn ask_plan(label: &str) -> Plan {
-    loop {
-        println!("  {} Plan  : [1] Basic  [2] Standard  [3] Premium", label);
+        println!(
+            "  {}: [1] Basic ${}/mo  [2] Standard ${}/mo  [3] Premium ${}/mo",
+            label,
+            Plan::Basic.fee(),
+            Plan::Standard.fee(),
+            Plan::Premium.fee()
+        );
         let v = prompt("  Choose (1/2/3): ");
+        if v.is_empty() {
+            return None;
+        }
         if let Some(p) = Plan::from_choice(&v) {
-            return p;
+            return Some(p);
         }
         err("Enter 1, 2 or 3.");
     }
 }
 
-fn print_member(id: u32, m: &Member) {
-    println!(
-        "  #{:<4} │ {:<18} │ Age: {:<3} │ {:<9} │ {:<20} │ {}",
-        id, m.name, m.age, m.plan.to_string(), m.email, m.phone
-    );
-}
-
-fn save_data(members: &HashMap<u32, Member>) {
-    if let Ok(mut file) = OpenOptions::new().write(true).create(true).truncate(true).open(DB_FILE) {
-        for (id, m) in members {
-            writeln!(file, "{},{},{},{},{},{}", id, m.name, m.age, m.plan, m.email, m.phone).unwrap_or(());
+/// Prompts for an existing member ID. Returns None on cancel or unknown ID.
+fn ask_id(members: &HashMap<u32, Member>) -> Option<u32> {
+    let raw = prompt("  Member ID   : ");
+    if raw.is_empty() {
+        return None;
+    }
+    let id = raw.trim_start_matches('#').parse::<u32>().ok();
+    match id {
+        Some(id) if members.contains_key(&id) => Some(id),
+        _ => {
+            err(&format!("No member with ID '{}'.", raw));
+            None
         }
     }
 }
 
-fn load_data(members: &mut HashMap<u32, Member>, next_id: &mut u32) {
-    if Path::new(DB_FILE).exists() {
-        if let Ok(file) = File::open(DB_FILE) {
-            let reader = BufReader::new(file);
-            let mut max_id = 0;
-            for line in reader.lines().flatten() {
-                let parts: Vec<&str> = line.split(',').collect();
-                if parts.len() == 6 {
-                    if let Ok(id) = parts[0].parse::<u32>() {
-                        members.insert(
-                            id,
-                            Member {
-                                name: parts[1].to_string(),
-                                age: parts[2].parse().unwrap_or(0),
-                                plan: Plan::from_str_exact(parts[3]),
-                                email: parts[4].to_string(),
-                                phone: parts[5].to_string(),
-                            },
-                        );
-                        if id > max_id {
-                            max_id = id;
-                        }
-                    }
+// ───────────────────────────── Dates ─────────────────────────────
+
+/// Today's date (UTC) as YYYY-MM-DD, without external crates.
+fn today() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) as i64;
+    // Howard Hinnant's civil-from-days algorithm.
+    let z = secs / 86_400 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+// ───────────────────────────── Persistence ─────────────────────────────
+// Format: id,name,age,plan,email,phone,joined   (6-column legacy files still load)
+// Validation forbids commas in every field, so no CSV quoting is needed.
+
+fn parse_line(line: &str) -> Option<(u32, Member)> {
+    let p: Vec<&str> = line.split(',').collect();
+    if p.len() != 6 && p.len() != 7 {
+        return None;
+    }
+    Some((
+        p[0].parse().ok()?,
+        Member {
+            name: p[1].to_string(),
+            age: p[2].parse().ok()?,
+            plan: Plan::parse(p[3])?,
+            email: p[4].to_string(),
+            phone: p[5].to_string(),
+            joined: p.get(6).map(|s| s.to_string()).unwrap_or_else(today),
+        },
+    ))
+}
+
+fn load_data() -> (HashMap<u32, Member>, u32) {
+    let mut members = HashMap::new();
+    let mut max_id = 0;
+    let mut skipped = 0;
+
+    if let Ok(file) = File::open(DB_FILE) {
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match parse_line(&line) {
+                Some((id, m)) => {
+                    max_id = max_id.max(id);
+                    members.insert(id, m);
                 }
-            }
-            if max_id > 0 {
-                *next_id = max_id + 1;
+                None => skipped += 1,
             }
         }
     }
+
+    if skipped > 0 {
+        err(&format!(
+            "Skipped {} unreadable line(s). Original file backed up to {}.",
+            skipped, BAK_FILE
+        ));
+        let _ = fs::copy(DB_FILE, BAK_FILE);
+    }
+    (members, max_id + 1)
+}
+
+/// Writes to a temp file then renames, so a crash mid-write can't corrupt the database.
+fn save_data(members: &HashMap<u32, Member>) -> io::Result<()> {
+    let mut ids: Vec<u32> = members.keys().copied().collect();
+    ids.sort_unstable();
+
+    let mut f = File::create(TMP_FILE)?;
+    for id in ids {
+        let m = &members[&id];
+        writeln!(
+            f,
+            "{},{},{},{},{},{},{}",
+            id, m.name, m.age, m.plan, m.email, m.phone, m.joined
+        )?;
+    }
+    f.sync_all()?;
+    fs::rename(TMP_FILE, DB_FILE)
+}
+
+fn persist(members: &HashMap<u32, Member>) {
+    if let Err(e) = save_data(members) {
+        err(&format!("Could not save data: {}", e));
+    }
+}
+
+// ───────────────────────────── Features ─────────────────────────────
+
+fn read_member(members: &HashMap<u32, Member>) -> Option<Member> {
+    Some(Member {
+        name: ask_name("Name")?,
+        age: ask_age("Age")?,
+        email: ask_email("Email", members, None)?,
+        phone: ask_phone("Phone")?,
+        plan: ask_plan("Plan")?,
+        joined: today(),
+    })
 }
 
 fn add_member(members: &mut HashMap<u32, Member>, next_id: &mut u32) {
     header("ADD MEMBER");
-    let member = Member {
-        name: ask_name(""),
-        age: ask_age(""),
-        email: ask_email(""),
-        phone: ask_phone(""),
-        plan: ask_plan(""),
+    info("Press Enter on an empty field to cancel.");
+    let Some(member) = read_member(members) else {
+        info("Cancelled.");
+        return;
     };
     members.insert(*next_id, member);
     ok(&format!("Member added — ID #{}", *next_id));
     *next_id += 1;
-    save_data(members);
+    persist(members);
 }
 
 fn view_members(members: &HashMap<u32, Member>) {
@@ -216,10 +399,17 @@ fn view_members(members: &HashMap<u32, Member>) {
         info("No members yet.");
         return;
     }
-    let mut list: Vec<(&u32, &Member)> = members.iter().collect();
-    list.sort_by_key(|(id, _)| *id);
+    let sort = prompt("  Sort by [1] ID  [2] Name  [3] Newest  (Enter = ID): ");
+    let mut list: Vec<(u32, &Member)> = members.iter().map(|(id, m)| (*id, m)).collect();
+    match sort.as_str() {
+        "2" => list.sort_by_key(|(id, m)| (m.name.to_lowercase(), *id)),
+        "3" => list.sort_by(|a, b| b.1.joined.cmp(&a.1.joined).then(b.0.cmp(&a.0))),
+        _ => list.sort_by_key(|(id, _)| *id),
+    }
+    divider();
+    table_header();
     for (id, m) in list {
-        print_member(**id, m);
+        print_member(id, m);
     }
     divider();
 }
@@ -230,53 +420,46 @@ fn search_members(members: &HashMap<u32, Member>) {
         return;
     }
     header("SEARCH");
-    println!("  [1] By ID   [2] By Name   [3] By Plan");
+    println!("  [1] By ID   [2] By Name / Email / Phone   [3] By Plan");
     let choice = prompt("  Choose: ");
 
     match choice.as_str() {
         "1" => {
-            let raw = prompt("  Member ID: ");
-            let id: u32 = raw.trim().parse().unwrap_or(0);
-            match members.get(&id) {
-                Some(m) => {
-                    divider();
-                    print_member(id, m);
-                    divider();
-                }
-                None => err(&format!("No member with ID #{}.", id)),
+            if let Some(id) = ask_id(members) {
+                show_list(vec![(id, &members[&id])]);
             }
         }
         "2" => {
-            let q = prompt("  Name (partial): ").to_lowercase();
-            let hits: Vec<_> = members
+            let q = prompt("  Search text : ").to_lowercase();
+            if q.is_empty() {
+                return;
+            }
+            let hits: Vec<(u32, &Member)> = members
                 .iter()
-                .filter(|(_, m)| m.name.to_lowercase().contains(&q))
+                .filter(|(_, m)| {
+                    m.name.to_lowercase().contains(&q)
+                        || m.email.to_lowercase().contains(&q)
+                        || m.phone.contains(&q)
+                })
+                .map(|(id, m)| (*id, m))
                 .collect();
             if hits.is_empty() {
                 err(&format!("No match for '{}'.", q));
             } else {
-                divider();
-                let mut sorted = hits;
-                sorted.sort_by_key(|(id, _)| *id);
-                for (id, m) in sorted {
-                    print_member(**id, m);
-                }
-                divider();
+                show_list(hits);
             }
         }
         "3" => {
-            let plan = ask_plan("Filter by");
-            let hits: Vec<_> = members.iter().filter(|(_, m)| m.plan == plan).collect();
+            let Some(plan) = ask_plan("Filter by") else { return };
+            let hits: Vec<(u32, &Member)> = members
+                .iter()
+                .filter(|(_, m)| m.plan == plan)
+                .map(|(id, m)| (*id, m))
+                .collect();
             if hits.is_empty() {
-                info(&format!("No members on {} plan.", plan));
+                info(&format!("No members on the {} plan.", plan));
             } else {
-                divider();
-                let mut sorted = hits;
-                sorted.sort_by_key(|(id, _)| *id);
-                for (id, m) in sorted {
-                    print_member(**id, m);
-                }
-                divider();
+                show_list(hits);
             }
         }
         _ => err("Invalid option."),
@@ -289,45 +472,34 @@ fn update_member(members: &mut HashMap<u32, Member>) {
         return;
     }
     header("UPDATE MEMBER");
+    info("Press Enter on an empty field to cancel.");
 
-    let raw = prompt("  Member ID: ");
-    let id: u32 = raw.trim().parse().unwrap_or(0);
-    if !members.contains_key(&id) {
-        err(&format!("No member with ID #{}.", id));
-        return;
-    }
+    let Some(id) = ask_id(members) else { return };
+    show_list(vec![(id, &members[&id])]);
 
     println!("  [1] Name  [2] Age  [3] Plan  [4] Email  [5] Phone");
     let field = prompt("  Field to update: ");
-    let m = members.get_mut(&id).unwrap();
 
-    match field.as_str() {
-        "1" => {
-            m.name = ask_name("New");
-            ok("Name updated.");
-        }
-        "2" => {
-            m.age = ask_age("New");
-            ok("Age updated.");
-        }
-        "3" => {
-            m.plan = ask_plan("New");
-            ok("Plan updated.");
-        }
-        "4" => {
-            m.email = ask_email("New");
-            ok("Email updated.");
-        }
-        "5" => {
-            m.phone = ask_phone("New");
-            ok("Phone updated.");
-        }
+    let mut m = members[&id].clone();
+    let changed = match field.as_str() {
+        "1" => ask_name("New name").map(|v| m.name = v).is_some(),
+        "2" => ask_age("New age").map(|v| m.age = v).is_some(),
+        "3" => ask_plan("New plan").map(|v| m.plan = v).is_some(),
+        "4" => ask_email("New email", members, Some(id)).map(|v| m.email = v).is_some(),
+        "5" => ask_phone("New phone").map(|v| m.phone = v).is_some(),
         _ => {
             err("Invalid field.");
             return;
         }
+    };
+
+    if changed {
+        members.insert(id, m);
+        ok("Member updated.");
+        persist(members);
+    } else {
+        info("No changes made.");
     }
-    save_data(members);
 }
 
 fn remove_member(members: &mut HashMap<u32, Member>) {
@@ -337,22 +509,17 @@ fn remove_member(members: &mut HashMap<u32, Member>) {
     }
     header("REMOVE MEMBER");
 
-    let raw = prompt("  Member ID: ");
-    let id: u32 = raw.trim().parse().unwrap_or(0);
+    let Some(id) = ask_id(members) else { return };
+    let m = &members[&id];
+    info(&format!("About to remove: {} ({}, {})", m.name, m.plan, m.email));
 
-    match members.get(&id) {
-        None => err(&format!("No member with ID #{}.", id)),
-        Some(m) => {
-            info(&format!("About to remove: {} ({})", m.name, m.plan));
-            let confirm = prompt("  Confirm? (yes/no): ");
-            if confirm.eq_ignore_ascii_case("yes") || confirm.eq_ignore_ascii_case("y") {
-                members.remove(&id);
-                ok("Member removed.");
-                save_data(members);
-            } else {
-                info("Cancelled.");
-            }
-        }
+    let confirm = prompt("  Confirm? (yes/no): ");
+    if confirm.eq_ignore_ascii_case("yes") || confirm.eq_ignore_ascii_case("y") {
+        members.remove(&id);
+        ok("Member removed.");
+        persist(members);
+    } else {
+        info("Cancelled.");
     }
 }
 
@@ -363,41 +530,41 @@ fn show_stats(members: &HashMap<u32, Member>) {
         return;
     }
 
-    let vals: Vec<&Member> = members.values().collect();
-    let total = vals.len();
-    let avg = vals.iter().map(|m| m.age as f64).sum::<f64>() / total as f64;
+    let total = members.len();
+    let avg = members.values().map(|m| m.age as f64).sum::<f64>() / total as f64;
+    let youngest = members.values().min_by_key(|m| m.age).unwrap();
+    let oldest = members.values().max_by_key(|m| m.age).unwrap();
+    let revenue: u32 = members.values().map(|m| m.plan.fee()).sum();
 
-    let basic = vals.iter().filter(|m| m.plan == Plan::Basic).count();
-    let standard = vals.iter().filter(|m| m.plan == Plan::Standard).count();
-    let premium = vals.iter().filter(|m| m.plan == Plan::Premium).count();
-
-    let youngest = vals.iter().min_by_key(|m| m.age).unwrap();
-    let oldest = vals.iter().max_by_key(|m| m.age).unwrap();
-
-    println!("  Total Members : {}", total);
-    println!("  Average Age   : {:.1}", avg);
-    println!("  Youngest      : {} ({})", youngest.name, youngest.age);
-    println!("  Oldest        : {} ({})", oldest.name, oldest.age);
+    println!("  Total Members   : {}", total);
+    println!("  Average Age     : {:.1}", avg);
+    println!("  Youngest        : {} ({})", youngest.name, youngest.age);
+    println!("  Oldest          : {} ({})", oldest.name, oldest.age);
+    println!("  Monthly Revenue : ${}", revenue);
     divider();
 
-    let max_len = 25;
-    let bar = |count: usize| "█".repeat(count * max_len / total.max(1));
-    
-    println!("  Basic    │ {:>3} │ {}", basic, bar(basic));
-    println!("  Standard │ {:>3} │ {}", standard, bar(standard));
-    println!("  Premium  │ {:>3} │ {}", premium, bar(premium));
+    const BAR_MAX: usize = 25;
+    for plan in Plan::ALL {
+        let count = members.values().filter(|m| m.plan == plan).count();
+        let pct = count as f64 * 100.0 / total as f64;
+        println!(
+            "  {:<8} │ {:>3} │ {:>5.1}% │ ${:<5} │ {}",
+            plan.to_string(),
+            count,
+            pct,
+            count as u32 * plan.fee(),
+            "█".repeat(count * BAR_MAX / total)
+        );
+    }
     divider();
 }
 
+// ───────────────────────────── Main ─────────────────────────────
+
 fn main() {
-    let mut members: HashMap<u32, Member> = HashMap::new();
-    let mut next_id: u32 = 1;
+    let (mut members, mut next_id) = load_data();
 
-    load_data(&mut members, &mut next_id);
-
-    println!("╔═════════════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                           GYM MEMBERSHIP MANAGEMENT SYSTEM                          ║");
-    println!("╚═════════════════════════════════════════════════════════════════════════════════════╝");
+    banner();
 
     loop {
         println!();
