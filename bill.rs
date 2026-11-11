@@ -1,369 +1,174 @@
+use std::collections::BTreeMap;
 use std::io::{self, Write};
-use std::collections::HashMap;
 
-#[derive(Clone, Debug)]
-struct Item {
-    name: String,
-    price: f64,
-    category: String,
-}
+const TAX_RATE: f64 = 0.08;
 
-#[derive(Debug)]
-struct CartItem {
-    item: Item,
-    quantity: u32,
-}
+const ITEMS: [(&str, f64, &str); 15] = [
+    ("Apple", 1.50, "Fruit"),
+    ("Banana", 0.80, "Fruit"),
+    ("Orange", 1.20, "Fruit"),
+    ("Grapes", 2.50, "Fruit"),
+    ("Milk", 2.30, "Dairy"),
+    ("Cheese", 4.50, "Dairy"),
+    ("Yogurt", 1.80, "Dairy"),
+    ("Bread", 1.90, "Bakery"),
+    ("Bagel", 1.20, "Bakery"),
+    ("Eggs", 3.20, "Protein"),
+    ("Chicken", 6.50, "Protein"),
+    ("Salmon", 8.99, "Protein"),
+    ("Spinach", 2.10, "Vegetables"),
+    ("Carrot", 0.90, "Vegetables"),
+    ("Tomato", 1.30, "Vegetables"),
+];
 
-struct Cart {
-    items: Vec<CartItem>,
-    coupon: Option<String>,
-}
+type Cart = BTreeMap<usize, u32>;
 
-struct Store {
-    inventory: Vec<Item>,
-    coupons: HashMap<String, f64>,
-    tax_rate: f64,
-}
-
-impl Store {
-    fn new() -> Self {
-        let mut coupons = HashMap::new();
-        coupons.insert("SAVE10".to_string(), 0.10);
-        coupons.insert("SAVE20".to_string(), 0.20);
-        coupons.insert("HALFOFF".to_string(), 0.50);
-
-        Store {
-            inventory: vec![
-                Item { name: "Apple".to_string(), price: 1.50, category: "Fruit".to_string() },
-                Item { name: "Banana".to_string(), price: 0.80, category: "Fruit".to_string() },
-                Item { name: "Orange".to_string(), price: 1.20, category: "Fruit".to_string() },
-                Item { name: "Grapes".to_string(), price: 2.50, category: "Fruit".to_string() },
-                Item { name: "Milk".to_string(), price: 2.30, category: "Dairy".to_string() },
-                Item { name: "Cheese".to_string(), price: 4.50, category: "Dairy".to_string() },
-                Item { name: "Yogurt".to_string(), price: 1.80, category: "Dairy".to_string() },
-                Item { name: "Bread".to_string(), price: 1.90, category: "Bakery".to_string() },
-                Item { name: "Bagel".to_string(), price: 1.20, category: "Bakery".to_string() },
-                Item { name: "Eggs".to_string(), price: 3.20, category: "Protein".to_string() },
-                Item { name: "Chicken".to_string(), price: 6.50, category: "Protein".to_string() },
-                Item { name: "Salmon".to_string(), price: 8.99, category: "Protein".to_string() },
-                Item { name: "Spinach".to_string(), price: 2.10, category: "Vegetables".to_string() },
-                Item { name: "Carrot".to_string(), price: 0.90, category: "Vegetables".to_string() },
-                Item { name: "Tomato".to_string(), price: 1.30, category: "Vegetables".to_string() },
-            ],
-            coupons,
-            tax_rate: 0.08,
-        }
-    }
-
-    fn search(&self, query: &str) -> Vec<(usize, &Item)> {
-        let q = query.to_lowercase();
-        self.inventory
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| {
-                item.name.to_lowercase().contains(&q) || item.category.to_lowercase().contains(&q)
-            })
-            .collect()
-    }
-}
-
-impl Cart {
-    fn new() -> Self {
-        Cart { items: Vec::new(), coupon: None }
-    }
-
-    fn add(&mut self, item: Item, qty: u32) {
-        if let Some(existing) = self.items.iter_mut().find(|c| c.item.name == item.name) {
-            existing.quantity += qty;
-            println!("  ✓ Updated {} (now x{})", item.name, existing.quantity);
-        } else {
-            println!("  ✓ Added {} x{} to cart", item.name, qty);
-            self.items.push(CartItem { item, quantity: qty });
-        }
-    }
-
-    fn remove(&mut self, name: &str) -> bool {
-        if let Some(pos) = self.items.iter().position(|c| c.item.name.to_lowercase() == name.to_lowercase()) {
-            let removed = self.items.remove(pos);
-            println!("  ✓ Removed {} from cart", removed.item.name);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn update_quantity(&mut self, name: &str, qty: u32) -> bool {
-        if let Some(item) = self.items.iter_mut().find(|c| c.item.name.to_lowercase() == name.to_lowercase()) {
-            if qty == 0 {
-                return false;
-            }
-            item.quantity = qty;
-            println!("  ✓ Updated {} to x{}", item.item.name, qty);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn subtotal(&self) -> f64 {
-        self.items.iter().map(|c| c.item.price * c.quantity as f64).sum()
-    }
-
-    fn total_items(&self) -> u32 {
-        self.items.iter().map(|c| c.quantity).sum()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    fn view(&self) {
-        if self.is_empty() {
-            println!("  (cart is empty)");
-            return;
-        }
-        println!("  {:<15} {:>6} {:>8} {:>10}", "Item", "Price", "Qty", "Total");
-        println!("  {}", "-".repeat(44));
-        for c in &self.items {
-            println!(
-                "  {:<15} {:>6.2} {:>8} {:>10.2}",
-                c.item.name,
-                c.item.price,
-                format!("x{}", c.quantity),
-                c.item.price * c.quantity as f64
-            );
-        }
-    }
-
-    fn apply_coupon(&mut self, code: &str, store: &Store) -> bool {
-        let upper = code.to_uppercase();
-        if store.coupons.contains_key(&upper) {
-            self.coupon = Some(upper.clone());
-            let pct = store.coupons[&upper] * 100.0;
-            println!("  ✓ Coupon applied: {:.0}% discount", pct);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn print_bill(&self, store: &Store) {
-        let subtotal = self.subtotal();
-        let discount = self.coupon.as_ref().map_or(0.0, |c| store.coupons.get(c).copied().unwrap_or(0.0));
-        let discount_amount = subtotal * discount;
-        let after_discount = subtotal - discount_amount;
-        let tax = after_discount * store.tax_rate;
-        let grand_total = after_discount + tax;
-
-        println!("\n╔══════════════════════════════════════════╗");
-        println!("║              RECEIPT                     ║");
-        println!("╠══════════════════════════════════════════╣");
-
-        self.view();
-
-        println!("  {}", "─".repeat(44));
-        println!("  {:<30} {:>10.2}", "Subtotal:", subtotal);
-
-        if discount > 0.0 {
-            println!(
-                "  {:<30} {:>10}",
-                format!("Discount ({:.0}%):", discount * 100.0),
-                format!("-${:.2}", discount_amount)
-            );
-        }
-
-        println!("  {:<30} {:>10.2}", format!("Tax ({:.0}%):", store.tax_rate * 100.0), tax);
-        println!("  {}", "─".repeat(44));
-        println!("  {:<30} {:>10.2}", "GRAND TOTAL:", grand_total);
-        println!("  {:<30} {:>10}", "Total Items:", self.total_items());
-
-        if let Some(c) = &self.coupon {
-            println!("  {:<30} {:>10}", "Coupon Used:", c);
-        }
-
-        println!("╚══════════════════════════════════════════╝");
-        println!("         Thank you for shopping!");
-    }
-}
-
-fn read_input(prompt: &str) -> String {
-    print!("{}", prompt);
+fn input(prompt: &str) -> String {
+    print!("{prompt}");
     io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
+    let mut line = String::new();
+    io::stdin().read_line(&mut line).unwrap();
+    line.trim().to_string()
 }
 
-fn print_menu() {
-    println!("\n┌─────────────────────────────────┐");
-    println!("│         GROCERY STORE           │");
-    println!("├─────────────────────────────────┤");
-    println!("│  [1] Browse all items           │");
-    println!("│  [2] Search items               │");
-    println!("│  [3] View cart                  │");
-    println!("│  [4] Remove item from cart      │");
-    println!("│  [5] Update item quantity       │");
-    println!("│  [6] Apply coupon               │");
-    println!("│  [7] Checkout & print bill      │");
-    println!("│  [0] Exit                       │");
-    println!("└─────────────────────────────────┘");
+fn number(prompt: &str) -> usize {
+    input(prompt).parse().unwrap_or(0)
 }
 
-fn browse_and_add(store: &Store, cart: &mut Cart) {
-    let categories: Vec<&str> = {
-        let mut seen = Vec::new();
-        for item in &store.inventory {
-            if !seen.contains(&item.category.as_str()) {
-                seen.push(item.category.as_str());
-            }
-        }
-        seen
-    };
-
-    println!("\n  Available Items:");
-    println!("  {:<4} {:<15} {:<12} {:>8}", "#", "Name", "Category", "Price");
-    println!("  {}", "─".repeat(42));
-
-    for (i, item) in store.inventory.iter().enumerate() {
-        println!("  {:<4} {:<15} {:<12} {:>8.2}", i + 1, item.name, item.category, item.price);
+fn discount(code: &str) -> Option<f64> {
+    match code.to_uppercase().as_str() {
+        "SAVE10" => Some(0.10),
+        "SAVE20" => Some(0.20),
+        "HALFOFF" => Some(0.50),
+        _ => None,
     }
+}
 
-    println!("\n  Categories: {}", categories.join(", "));
+fn show_cart(cart: &Cart) -> f64 {
+    let mut subtotal = 0.0;
+    for (&i, &qty) in cart {
+        let line = ITEMS[i].1 * qty as f64;
+        subtotal += line;
+        println!("{:>2}. {:<10} x{:<3} ${:.2}", i + 1, ITEMS[i].0, qty, line);
+    }
+    subtotal
+}
 
-    let choice_str = read_input("\n  Enter item # to add (or 0 to cancel): ");
-    let choice: usize = choice_str.parse().unwrap_or(0);
+fn shop(cart: &mut Cart) {
+    let query = input("Search by name or category (blank for all): ").to_lowercase();
+    let matches: Vec<usize> = (0..ITEMS.len())
+        .filter(|&i| {
+            ITEMS[i].0.to_lowercase().contains(&query) || ITEMS[i].2.to_lowercase().contains(&query)
+        })
+        .collect();
 
-    if choice == 0 || choice > store.inventory.len() {
-        if choice != 0 {
-            println!("  Invalid selection.");
-        }
+    if matches.is_empty() {
+        println!("No matches.");
         return;
     }
 
-    let qty_str = read_input("  Enter quantity: ");
-    let qty: u32 = qty_str.parse().unwrap_or(0);
+    for &i in &matches {
+        let (name, price, category) = ITEMS[i];
+        println!("{:>2}. {:<10} {:<11} ${:.2}", i + 1, name, category, price);
+    }
 
+    let id = number("Item # to add (0 to cancel): ");
+    if id == 0 {
+        return;
+    }
+    if !matches.contains(&(id - 1)) {
+        println!("Invalid selection.");
+        return;
+    }
+
+    let qty = number("Quantity: ") as u32;
     if qty == 0 {
-        println!("  Invalid quantity.");
+        println!("Invalid quantity.");
         return;
     }
 
-    cart.add(store.inventory[choice - 1].clone(), qty);
+    *cart.entry(id - 1).or_insert(0) += qty;
+    println!("Added {} x{}.", ITEMS[id - 1].0, qty);
 }
 
-fn search_and_add(store: &Store, cart: &mut Cart) {
-    let query = read_input("\n  Search for item or category: ");
-    if query.is_empty() {
+fn edit(cart: &mut Cart) {
+    if cart.is_empty() {
+        println!("Cart is empty.");
+        return;
+    }
+    show_cart(cart);
+
+    let id = number("Item # to change: ");
+    if id == 0 || !cart.contains_key(&(id - 1)) {
+        println!("Not in cart.");
         return;
     }
 
-    let results = store.search(&query);
-
-    if results.is_empty() {
-        println!("  No items found matching \"{}\".", query);
-        return;
+    let qty = number("New quantity (0 to remove): ") as u32;
+    if qty == 0 {
+        cart.remove(&(id - 1));
+        println!("Removed.");
+    } else {
+        cart.insert(id - 1, qty);
+        println!("Updated.");
     }
+}
 
-    println!("\n  Search results for \"{}\":", query);
-    println!("  {:<4} {:<15} {:<12} {:>8}", "#", "Name", "Category", "Price");
-    println!("  {}", "─".repeat(42));
+fn checkout(cart: &Cart, coupon: &Option<(String, f64)>) {
+    println!("\n----------- RECEIPT -----------");
+    let subtotal = show_cart(cart);
+    let rate = coupon.as_ref().map_or(0.0, |(_, r)| *r);
+    let discounted = subtotal * (1.0 - rate);
+    let tax = discounted * TAX_RATE;
 
-    for (orig_idx, item) in &results {
-        println!("  {:<4} {:<15} {:<12} {:>8.2}", orig_idx + 1, item.name, item.category, item.price);
+    println!("-------------------------------");
+    println!("Subtotal:  ${:.2}", subtotal);
+    if let Some((code, r)) = coupon {
+        println!("Discount ({code}, {:.0}%): -${:.2}", r * 100.0, subtotal * r);
     }
-
-    let choice_str = read_input("\n  Enter item # to add (or 0 to cancel): ");
-    let choice: usize = choice_str.parse().unwrap_or(0);
-
-    if choice == 0 {
-        return;
-    }
-
-    let selected = results.iter().find(|(i, _)| i + 1 == choice);
-    match selected {
-        None => println!("  Invalid selection."),
-        Some((_, item)) => {
-            let qty_str = read_input("  Enter quantity: ");
-            let qty: u32 = qty_str.parse().unwrap_or(0);
-            if qty == 0 {
-                println!("  Invalid quantity.");
-            } else {
-                cart.add((*item).clone(), qty);
-            }
-        }
-    }
+    println!("Tax:       ${:.2}", tax);
+    println!("TOTAL:     ${:.2}", discounted + tax);
+    println!("\nThank you for shopping!");
 }
 
 fn main() {
-    let store = Store::new();
     let mut cart = Cart::new();
+    let mut coupon: Option<(String, f64)> = None;
 
-    println!("╔══════════════════════════════════════════╗");
-    println!("║       Welcome to Grocery Store!          ║");
-    println!("║   Available coupons: SAVE10, SAVE20      ║");
-    println!("╚══════════════════════════════════════════╝");
+    println!("Welcome to the Grocery Store! Coupons: SAVE10, SAVE20");
 
     loop {
-        print_menu();
-        let choice = read_input("  Choose option: ");
-
-        match choice.as_str() {
-            "1" => browse_and_add(&store, &mut cart),
-            "2" => search_and_add(&store, &mut cart),
-            "3" => {
-                println!("\n  --- Your Cart ---");
-                cart.view();
-                if !cart.is_empty() {
-                    println!("  Subtotal: ${:.2} ({} items)", cart.subtotal(), cart.total_items());
+        println!("\n1) Shop  2) View cart  3) Edit cart  4) Coupon  5) Checkout  0) Exit");
+        match input("> ").as_str() {
+            "1" => shop(&mut cart),
+            "2" => {
+                if cart.is_empty() {
+                    println!("Cart is empty.");
+                } else {
+                    println!("Subtotal: ${:.2}", show_cart(&cart));
                 }
             }
+            "3" => edit(&mut cart),
             "4" => {
-                if cart.is_empty() {
-                    println!("  Cart is empty.");
-                    continue;
-                }
-                cart.view();
-                let name = read_input("\n  Enter item name to remove: ");
-                if !cart.remove(&name) {
-                    println!("  Item \"{}\" not found in cart.", name);
+                let code = input("Coupon code: ");
+                match discount(&code) {
+                    Some(rate) => {
+                        println!("Applied {:.0}% off.", rate * 100.0);
+                        coupon = Some((code.to_uppercase(), rate));
+                    }
+                    None => println!("Invalid coupon."),
                 }
             }
             "5" => {
                 if cart.is_empty() {
-                    println!("  Cart is empty.");
-                    continue;
-                }
-                cart.view();
-                let name = read_input("\n  Enter item name to update: ");
-                let qty_str = read_input("  Enter new quantity (0 to remove): ");
-                let qty: u32 = qty_str.parse().unwrap_or(0);
-                if qty == 0 {
-                    if !cart.remove(&name) {
-                        println!("  Item \"{}\" not found in cart.", name);
-                    }
-                } else if !cart.update_quantity(&name, qty) {
-                    println!("  Item \"{}\" not found in cart.", name);
+                    println!("Add some items first.");
+                } else {
+                    checkout(&cart, &coupon);
+                    break;
                 }
             }
-            "6" => {
-                let code = read_input("\n  Enter coupon code: ");
-                if !cart.apply_coupon(&code, &store) {
-                    println!("  Invalid coupon code.");
-                }
-            }
-            "7" => {
-                if cart.is_empty() {
-                    println!("  Your cart is empty. Add some items first!");
-                    continue;
-                }
-                cart.print_bill(&store);
-                break;
-            }
-            "0" => {
-                println!("\n  Goodbye!");
-                break;
-            }
-            _ => println!("  Invalid option. Please choose 0-7."),
+            "0" => break,
+            _ => println!("Please choose 0-5."),
         }
     }
 }
