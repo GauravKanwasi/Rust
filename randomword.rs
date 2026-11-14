@@ -1,224 +1,125 @@
-
-use rand::distributions::WeightedIndex;
 use rand::prelude::*;
+use std::collections::BTreeMap;
 
-use std::fmt;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Category {
     Technical,
     Business,
     Security,
 }
 
-impl Category {
-    const ALL: [Category; 3] = [
-        Category::Technical,
-        Category::Business,
-        Category::Security,
-    ];
-
-    fn index(self) -> usize {
-        match self {
-            Category::Technical => 0,
-            Category::Business => 1,
-            Category::Security => 2,
-        }
-    }
-}
-
-impl fmt::Display for Category {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Category::Technical => "Technical",
-                Category::Business => "Business",
-                Category::Security => "Security",
-            }
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
 struct Word {
     text: &'static str,
     category: Category,
     weight: u32,
 }
 
-struct WordSampler {
+struct Sampler {
     words: Vec<Word>,
-    history: Vec<usize>,
     counts: Vec<usize>,
-    sampled: Vec<bool>,
-    distribution: WeightedIndex<u32>,
 }
 
-impl WordSampler {
-    fn new(words: Vec<Word>) -> Result<Self, String> {
-        if words.is_empty() {
-            return Err("Word list cannot be empty".into());
-        }
-
-        let weights: Vec<u32> = words.iter().map(|w| w.weight).collect();
-
-        let distribution = WeightedIndex::new(&weights)
-            .map_err(|e| format!("Invalid weights: {e}"))?;
-
-        let n = words.len();
-
-        Ok(Self {
-            words,
-            history: Vec::new(),
-            counts: vec![0; n],
-            sampled: vec![false; n],
-            distribution,
-        })
+impl Sampler {
+    fn new(words: Vec<Word>) -> Self {
+        let counts = vec![0; words.len()];
+        Self { words, counts }
     }
 
-    fn record(&mut self, index: usize) {
-        self.history.push(index);
-        self.counts[index] += 1;
-        self.sampled[index] = true;
-    }
-
-    fn sample(&mut self, rng: &mut impl Rng) -> &Word {
-        let index = self.distribution.sample(rng);
-        self.record(index);
-        &self.words[index]
-    }
-
-    fn sample_unique(&mut self, rng: &mut impl Rng) -> Option<&Word> {
-        let weights: Vec<u32> = self.words
-            .iter()
-            .enumerate()
-            .map(|(i, word)| {
-                if self.sampled[i] {
-                    0
-                } else {
-                    word.weight
-                }
-            })
+    fn pick(&mut self, rng: &mut impl Rng, unique: bool) -> Option<&Word> {
+        let candidates: Vec<usize> = (0..self.words.len())
+            .filter(|&i| !unique || self.counts[i] == 0)
             .collect();
 
-        let distribution = WeightedIndex::new(&weights).ok()?;
-        let index = distribution.sample(rng);
+        let &i = candidates
+            .choose_weighted(rng, |&i| self.words[i].weight)
+            .ok()?;
 
-        self.record(index);
-
-        Some(&self.words[index])
+        self.counts[i] += 1;
+        Some(&self.words[i])
     }
 
-    fn stats(&self) -> Vec<(&str, usize)> {
-        self.words
+    fn total(&self) -> usize {
+        self.counts.iter().sum()
+    }
+
+    fn frequencies(&self) -> Vec<(&'static str, usize)> {
+        let mut freq: Vec<_> = self
+            .words
             .iter()
-            .zip(self.counts.iter())
-            .filter(|(_, count)| **count > 0)
-            .map(|(word, count)| (word.text, *count))
-            .collect()
+            .zip(&self.counts)
+            .filter(|(_, &n)| n > 0)
+            .map(|(w, &n)| (w.text, n))
+            .collect();
+        freq.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        freq
     }
 
-    fn category_distribution(&self) -> [(Category, usize); 3] {
-        let mut counts = [0usize; 3];
-
-        for (word, &count) in self.words.iter().zip(&self.counts) {
-            counts[word.category.index()] += count;
+    fn by_category(&self) -> BTreeMap<Category, usize> {
+        let mut map = BTreeMap::new();
+        for (w, &n) in self.words.iter().zip(&self.counts) {
+            *map.entry(w.category).or_insert(0) += n;
         }
-
-        [
-            (Category::Technical, counts[0]),
-            (Category::Business, counts[1]),
-            (Category::Security, counts[2]),
-        ]
-    }
-
-    fn total_samples(&self) -> usize {
-        self.history.len()
+        map
     }
 }
 
-fn build_words() -> Vec<Word> {
-    vec![
-        Word { text: "innovation", category: Category::Business, weight: 3 },
-        Word { text: "resilience", category: Category::Business, weight: 2 },
-        Word { text: "efficiency", category: Category::Business, weight: 3 },
-        Word { text: "precision", category: Category::Technical, weight: 4 },
-        Word { text: "scalability", category: Category::Technical, weight: 5 },
-        Word { text: "integrity", category: Category::Security, weight: 2 },
-        Word { text: "optimization", category: Category::Technical, weight: 4 },
-        Word { text: "automation", category: Category::Technical, weight: 3 },
-        Word { text: "security", category: Category::Security, weight: 5 },
-        Word { text: "performance", category: Category::Technical, weight: 4 },
-        Word { text: "observability", category: Category::Technical, weight: 2 },
-        Word { text: "compliance", category: Category::Security, weight: 3 },
-        Word { text: "throughput", category: Category::Technical, weight: 3 },
-        Word { text: "governance", category: Category::Business, weight: 2 },
-        Word { text: "reliability", category: Category::Technical, weight: 4 },
+fn words() -> Vec<Word> {
+    use Category::*;
+    [
+        ("innovation", Business, 3),
+        ("resilience", Business, 2),
+        ("efficiency", Business, 3),
+        ("precision", Technical, 4),
+        ("scalability", Technical, 5),
+        ("integrity", Security, 2),
+        ("optimization", Technical, 4),
+        ("automation", Technical, 3),
+        ("security", Security, 5),
+        ("performance", Technical, 4),
+        ("observability", Technical, 2),
+        ("compliance", Security, 3),
+        ("throughput", Technical, 3),
+        ("governance", Business, 2),
+        ("reliability", Technical, 4),
     ]
+    .into_iter()
+    .map(|(text, category, weight)| Word { text, category, weight })
+    .collect()
 }
 
 fn main() {
     let mut rng = thread_rng();
+    let mut sampler = Sampler::new(words());
 
-    let mut sampler = match WordSampler::new(build_words()) {
-        Ok(sampler) => sampler,
-        Err(error) => {
-            eprintln!("{error}");
-            return;
-        }
-    };
-
-    println!("\n========== WEIGHTED RANDOM SAMPLES ==========");
-
+    println!("\n=== WEIGHTED SAMPLES ===");
     for _ in 0..5 {
-        let word = sampler.sample(&mut rng);
-        println!("  {:<12} {}", word.category, word.text);
+        if let Some(w) = sampler.pick(&mut rng, false) {
+            println!("  {:<12} {}", format!("{:?}", w.category), w.text);
+        }
     }
 
-    println!("\n========== UNIQUE SAMPLES ==========");
-
+    println!("\n=== UNIQUE SAMPLES ===");
     for _ in 0..5 {
-        match sampler.sample_unique(&mut rng) {
-            Some(word) => {
-                println!("  {:<12} {}", word.category, word.text);
-            }
+        match sampler.pick(&mut rng, true) {
+            Some(w) => println!("  {:<12} {}", format!("{:?}", w.category), w.text),
             None => {
-                println!("  No more weighted samples available");
+                println!("  No more unique words");
                 break;
             }
         }
     }
 
-    println!("\n========== WORD FREQUENCY ==========");
-
-    let mut stats = sampler.stats();
-    stats.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-
-    for (word, count) in stats {
-        println!("  {:<16} {:<20} {}", word, "#".repeat(count), count);
+    println!("\n=== FREQUENCY ===");
+    for (text, n) in sampler.frequencies() {
+        println!("  {:<16} {:<10} {}", text, "#".repeat(n), n);
     }
 
-    println!("\n========== CATEGORY DISTRIBUTION ==========");
-
-    let categories = sampler.category_distribution();
-    let total = sampler.total_samples();
-
-    for (category, count) in categories {
-        let percentage = if total > 0 {
-            count as f64 / total as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        println!(
-            "  {:<12} {:>3} samples  ({:>5.1}%)",
-            category, count, percentage
-        );
+    let total = sampler.total();
+    println!("\n=== CATEGORIES ===");
+    for (category, n) in sampler.by_category() {
+        let pct = if total > 0 { n as f64 * 100.0 / total as f64 } else { 0.0 };
+        println!("  {:<12} {:>3}  ({:>5.1}%)", format!("{:?}", category), n, pct);
     }
 
-    println!("\n============================================");
-    println!("  Total Samples: {}", total);
-    println!("============================================");
+    println!("\nTotal samples: {total}");
 }
