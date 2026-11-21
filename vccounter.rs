@@ -1,22 +1,21 @@
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
-fn main() {
-    let mut input = String::new();
-    if io::stdin().read_to_string(&mut input).is_err() {
-        return;
+fn main() -> io::Result<()> {
+    let mut buf = Vec::new();
+    io::stdin().lock().read_to_end(&mut buf)?;
+
+    let (mut vowels, mut consonants) = (0usize, 0usize);
+    for &b in &buf {
+        if b.is_ascii_alphabetic() {
+            if matches!(b.to_ascii_lowercase(), b'a' | b'e' | b'i' | b'o' | b'u') {
+                vowels += 1;
+            } else {
+                consonants += 1;
+            }
+        }
     }
 
-    let (vowels, consonants) = input
-        .chars()
-        .filter(|c| c.is_ascii_alphabetic())
-        .fold((0usize, 0usize), |(v, c), ch| {
-            match ch.to_ascii_lowercase() {
-                'a' | 'e' | 'i' | 'o' | 'u' => (v + 1, c),
-                _ => (v, c + 1),
-            }
-        });
-
-    println!("{}", input.trim());
-    println!("{}", vowels);
-    println!("{}", consonants);
+    let text = String::from_utf8_lossy(&buf);
+    let mut out = io::stdout().lock();
+    writeln!(out, "{}\n{}\n{}", text.trim(), vowels, consonants)
 }
