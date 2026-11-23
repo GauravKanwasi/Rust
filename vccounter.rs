@@ -1,36 +1,25 @@
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{self, Read, Write};
 
-const KIND: [u8; 256] = build_table();
+const VOWELS: u32 = 1 | 1 << 4 | 1 << 8 | 1 << 14 | 1 << 20;
 
-const fn build_table() -> [u8; 256] {
-    let mut table = [0u8; 256];
-    let mut i = 0;
-    while i < 256 {
-        let b = i as u8;
-        table[i] = if b.is_ascii_alphabetic() {
-            match b.to_ascii_lowercase() {
-                b'a' | b'e' | b'i' | b'o' | b'u' => 1,
-                _ => 2,
-            }
-        } else {
-            0
-        };
-        i += 1;
-    }
-    table
+fn count_letters(bytes: &[u8]) -> (usize, usize) {
+    let (vowels, letters) = bytes.iter().fold((0usize, 0usize), |(v, l), &b| {
+        let idx = (b | 0x20).wrapping_sub(b'a');
+        let is_letter = idx < 26;
+        let is_vowel = is_letter & ((VOWELS >> (idx & 31)) & 1 == 1);
+        (v + is_vowel as usize, l + is_letter as usize)
+    });
+    (vowels, letters - vowels)
 }
 
 fn main() -> io::Result<()> {
     let mut buf = Vec::new();
     io::stdin().lock().read_to_end(&mut buf)?;
 
-    let mut counts = [0usize; 3];
-    for &b in &buf {
-        counts[KIND[b as usize] as usize] += 1;
-    }
+    let (vowels, consonants) = count_letters(&buf);
 
-    let mut out = BufWriter::new(io::stdout().lock());
+    let mut out = io::stdout().lock();
     out.write_all(buf.trim_ascii())?;
-    writeln!(out, "\n{}\n{}", counts[1], counts[2])?;
+    writeln!(out, "\n{vowels}\n{consonants}")?;
     out.flush()
 }
